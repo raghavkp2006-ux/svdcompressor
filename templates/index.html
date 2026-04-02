@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVD Compressor — Singular Value Decomposition Image Compression</title>
+    <meta name="description" content="Interactive SVD image compression tool — visualize how Singular Value Decomposition compresses images with real-time metrics, charts, and before/after comparison.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <!-- ───── Animated Background ───── -->
+    <div class="bg-grid"></div>
+    <div class="aurora-bg">
+        <div class="aurora-blob aurora-1"></div>
+        <div class="aurora-blob aurora-2"></div>
+        <div class="aurora-blob aurora-3"></div>
+    </div>
+
+    <!-- ───── Navigation Bar ───── -->
+    <nav class="navbar" id="main-nav">
+        <div class="nav-inner">
+            <div class="nav-brand">
+                <div class="brand-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                        <rect x="2" y="2" width="8" height="8" rx="2" fill="url(#g1)" opacity="0.9"/>
+                        <rect x="14" y="2" width="8" height="8" rx="2" fill="url(#g1)" opacity="0.6"/>
+                        <rect x="2" y="14" width="8" height="8" rx="2" fill="url(#g1)" opacity="0.4"/>
+                        <rect x="14" y="14" width="8" height="8" rx="2" fill="url(#g1)" opacity="0.2"/>
+                        <defs>
+                            <linearGradient id="g1" x1="0" y1="0" x2="24" y2="24">
+                                <stop stop-color="#a78bfa"/>
+                                <stop offset="1" stop-color="#6366f1"/>
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                </div>
+                <span class="brand-text">SVD Compressor</span>
+            </div>
+            <div class="nav-links">
+                <a href="#upload-section" class="nav-link">Upload</a>
+                <a href="#results-section" class="nav-link">Results</a>
+                <a href="#charts-section" class="nav-link">Analytics</a>
+                <a href="#explanation-section" class="nav-link">How it Works</a>
+            </div>
+            <div class="nav-divider"></div>
+            <button class="theme-toggle" id="theme-toggle" title="Toggle theme" aria-label="Toggle dark/light theme">
+                <!-- Sun icon (shown in dark mode) -->
+                <svg class="theme-icon theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="5"/>
+                    <line x1="12" y1="1" x2="12" y2="3"/>
+                    <line x1="12" y1="21" x2="12" y2="23"/>
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                    <line x1="1" y1="12" x2="3" y2="12"/>
+                    <line x1="21" y1="12" x2="23" y2="12"/>
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                </svg>
+                <!-- Moon icon (shown in light mode) -->
+                <svg class="theme-icon theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                </svg>
+            </button>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <!-- ───── Hero Section ───── -->
+        <section class="hero-section">
+            <div class="hero-badge">
+                <span class="badge-dot"></span>
+                <span>Powered by Linear Algebra</span>
+            </div>
+            <h1 class="hero-title">
+                <span class="hero-line">Image Compression</span>
+                <span class="hero-line gradient-text">via SVD</span>
+            </h1>
+            <p class="hero-subtitle">
+                Decompose images into singular values, discard trivial information,
+                and reconstruct near-perfect images at a fraction of the original size.
+            </p>
+            <a href="#upload-section" class="hero-cta">
+                <span>Start Compressing</span>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M8 3v10M8 13l4-4M8 13l-4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+            </a>
+        </section>
+
+        <!-- ───── Upload Section ───── -->
+        <section class="section" id="upload-section">
+            <div class="section-header">
+                <span class="section-tag">01</span>
+                <h2 class="section-title">Upload & Configure</h2>
+            </div>
+
+            <div class="upload-grid">
+                <!-- Upload Card -->
+                <div class="glass-card upload-card" id="upload-card">
+                    <div class="upload-zone" id="upload-zone">
+                        <div class="upload-icon">
+                            <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                                <rect x="4" y="4" width="40" height="40" rx="8" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 4" opacity="0.4"/>
+                                <path d="M24 16v16M16 24h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            </svg>
+                        </div>
+                        <p class="upload-text">Drop an image here or <span class="upload-browse">browse</span></p>
+                        <p class="upload-hint">PNG, JPG, or WEBP — max 16MB</p>
+                        <input type="file" id="file-input" accept="image/*" hidden>
+                    </div>
+                    <div class="upload-preview" id="upload-preview" style="display:none">
+                        <img id="preview-img" alt="Preview">
+                        <button class="btn-remove" id="btn-remove" title="Remove image">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                                <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Controls Card -->
+                <div class="glass-card controls-card">
+                    <h3 class="card-title">Compression Settings</h3>
+
+                    <!-- Mode Toggle -->
+                    <div class="control-group">
+                        <label class="control-label">Mode</label>
+                        <div class="mode-toggle" id="mode-toggle">
+                            <button class="mode-btn active" data-mode="basic" id="btn-basic">Basic SVD</button>
+                            <button class="mode-btn" data-mode="adaptive" id="btn-adaptive">Adaptive SVD</button>
+                            <div class="mode-indicator" id="mode-indicator"></div>
+                        </div>
+                    </div>
+
+                    <!-- K Slider (Basic mode) -->
+                    <div class="control-group" id="k-control">
+                        <div class="control-label-row">
+                            <label class="control-label">Singular Values (k)</label>
+                            <span class="control-value" id="k-value">50</span>
+                        </div>
+                        <input type="range" class="slider" id="k-slider" min="1" max="300" value="50">
+                        <div class="slider-labels">
+                            <span>1</span>
+                            <span>More compression ← → Better quality</span>
+                            <span>300</span>
+                        </div>
+                    </div>
+
+                    <!-- Energy Slider (Adaptive mode) -->
+                    <div class="control-group" id="energy-control" style="display:none">
+                        <div class="control-label-row">
+                            <label class="control-label">Energy Retained (%)</label>
+                            <span class="control-value" id="energy-value">95%</span>
+                        </div>
+                        <input type="range" class="slider" id="energy-slider" min="50" max="99.9" value="95" step="0.1">
+                        <div class="slider-labels">
+                            <span>50%</span>
+                            <span>Higher energy = better quality</span>
+                            <span>99.9%</span>
+                        </div>
+                    </div>
+
+                    <!-- Compress Button -->
+                    <button class="btn-primary" id="btn-compress" disabled>
+                        <span class="btn-content">
+                            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                                <path d="M4 9h10M9 4v10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                            </svg>
+                            Compress Image
+                        </span>
+                        <span class="btn-loading" style="display:none">
+                            <div class="spinner"></div>
+                            Processing SVD...
+                        </span>
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ───── Results Section ───── -->
+        <section class="section hidden" id="results-section">
+            <div class="section-header">
+                <span class="section-tag">02</span>
+                <h2 class="section-title">Compression Results</h2>
+            </div>
+
+            <!-- Metrics Row -->
+            <div class="metrics-grid" id="metrics-grid">
+                <div class="metric-card" id="metric-psnr">
+                    <div class="metric-icon psnr-icon">
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                            <path d="M3 17l4-6 3 4 4-8 3 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </div>
+                    <div class="metric-value" id="val-psnr">—</div>
+                    <div class="metric-label">PSNR (dB)</div>
+                    <div class="metric-desc">Peak Signal-to-Noise Ratio</div>
+                </div>
+                <div class="metric-card" id="metric-ssim">
+                    <div class="metric-icon ssim-icon">
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                            <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.5"/>
+                            <path d="M7 10l2 2 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </div>
+                    <div class="metric-value" id="val-ssim">—</div>
+                    <div class="metric-label">SSIM</div>
+                    <div class="metric-desc">Structural Similarity Index</div>
+                </div>
+                <div class="metric-card" id="metric-cr">
+                    <div class="metric-icon cr-icon">
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                            <rect x="3" y="3" width="14" height="14" rx="3" stroke="currentColor" stroke-width="1.5"/>
+                            <path d="M7 13V7h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </div>
+                    <div class="metric-value" id="val-cr">—</div>
+                    <div class="metric-label">Compression Ratio</div>
+                    <div class="metric-desc">Size reduction factor</div>
+                </div>
+                <div class="metric-card" id="metric-mse">
+                    <div class="metric-icon mse-icon">
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                            <path d="M3 10c3-7 11-7 14 0-3 7-11 7-14 0z" stroke="currentColor" stroke-width="1.5"/>
+                            <circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+                        </svg>
+                    </div>
+                    <div class="metric-value" id="val-mse">—</div>
+                    <div class="metric-label">MSE</div>
+                    <div class="metric-desc">Mean Squared Error</div>
+                </div>
+            </div>
+
+            <!-- Before / After Slider -->
+            <div class="glass-card comparison-card">
+                <div class="comparison-header">
+                    <h3 class="card-title">Before / After Comparison</h3>
+                    <div class="comparison-labels">
+                        <span class="label-original">Original</span>
+                        <span class="label-compressed">Compressed (k=<span id="comparison-k">—</span>)</span>
+                    </div>
+                </div>
+                <div class="comparison-container" id="comparison-container">
+                    <div class="comparison-wrapper">
+                        <img id="img-original" class="comparison-img" alt="Original">
+                        <div class="comparison-overlay" id="comparison-overlay">
+                            <img id="img-compressed" class="comparison-img" alt="Compressed">
+                        </div>
+                        <div class="comparison-slider-line" id="comparison-line">
+                            <div class="comparison-handle" id="comparison-handle">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                                    <path d="M8 6l-4 6 4 6M16 6l4 6-4 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                    <input type="range" class="comparison-range" id="comparison-range" min="0" max="100" value="50">
+                </div>
+                <div class="download-row">
+                    <button class="btn-secondary" id="btn-download">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                            <path d="M8 2v9M4 7l4 4 4-4M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        Download Compressed
+                    </button>
+                    <div class="info-chip" id="info-chip">
+                        <span id="info-size">— × —</span> · <span id="info-mode">Basic SVD</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ───── Charts Section ───── -->
+        <section class="section hidden" id="charts-section">
+            <div class="section-header">
+                <span class="section-tag">03</span>
+                <h2 class="section-title">Analytics & Visualization</h2>
+            </div>
+
+            <div class="charts-grid">
+                <div class="glass-card chart-card">
+                    <h3 class="card-title">Singular Value Decay</h3>
+                    <p class="card-desc">How quickly singular values drop — faster decay means better compressibility.</p>
+                    <div class="chart-wrapper">
+                        <canvas id="chart-sv"></canvas>
+                    </div>
+                </div>
+
+                <div class="glass-card chart-card">
+                    <h3 class="card-title">Cumulative Energy</h3>
+                    <p class="card-desc">Percentage of total image energy captured as k increases.</p>
+                    <div class="chart-wrapper">
+                        <canvas id="chart-energy"></canvas>
+                    </div>
+                </div>
+
+                <div class="glass-card chart-card">
+                    <h3 class="card-title">PSNR vs k</h3>
+                    <p class="card-desc">How image quality (PSNR in dB) improves with more singular values.</p>
+                    <div class="chart-wrapper">
+                        <canvas id="chart-psnr"></canvas>
+                    </div>
+                </div>
+
+                <div class="glass-card chart-card">
+                    <h3 class="card-title">SSIM vs k</h3>
+                    <p class="card-desc">Structural similarity index at different compression levels.</p>
+                    <div class="chart-wrapper">
+                        <canvas id="chart-ssim"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ───── Explanation Section ───── -->
+        <section class="section" id="explanation-section">
+            <div class="section-header">
+                <span class="section-tag">04</span>
+                <h2 class="section-title">How SVD Compression Works</h2>
+            </div>
+
+            <div class="explanation-grid">
+                <div class="glass-card explanation-card">
+                    <div class="step-number">1</div>
+                    <h3 class="step-title">Decompose</h3>
+                    <p class="step-desc">
+                        Each colour channel of the image (an m × n matrix <strong>A</strong>) is factored into three matrices:
+                    </p>
+                    <div class="math-block">A = U · Σ · Vᵀ</div>
+                    <p class="step-desc">
+                        <strong>U</strong> (m × m) holds left singular vectors,
+                        <strong>Σ</strong> (m × n) holds singular values in decreasing order,
+                        <strong>Vᵀ</strong> (n × n) holds right singular vectors.
+                    </p>
+                </div>
+
+                <div class="glass-card explanation-card">
+                    <div class="step-number">2</div>
+                    <h3 class="step-title">Truncate</h3>
+                    <p class="step-desc">
+                        Keep only the top <strong>k</strong> singular values and their corresponding vectors. This forms a rank-k approximation:
+                    </p>
+                    <div class="math-block">A<sub>k</sub> = U<sub>k</sub> · Σ<sub>k</sub> · V<sub>k</sub>ᵀ</div>
+                    <p class="step-desc">
+                        The Eckart-Young theorem guarantees this is the best rank-k approximation in Frobenius norm.
+                    </p>
+                </div>
+
+                <div class="glass-card explanation-card">
+                    <div class="step-number">3</div>
+                    <h3 class="step-title">Reconstruct</h3>
+                    <p class="step-desc">
+                        The compressed image is rebuilt from fewer numbers:
+                        instead of storing <strong>m × n</strong> values, you store <strong>k × (m + n + 1)</strong>.
+                    </p>
+                    <div class="math-block">CR = (m · n) / (k · (m + n + 1))</div>
+                    <p class="step-desc">
+                        Smaller k = more compression but lower quality. The trick is finding the sweet spot.
+                    </p>
+                </div>
+
+                <div class="glass-card explanation-card">
+                    <div class="step-number">4</div>
+                    <h3 class="step-title">Evaluate</h3>
+                    <p class="step-desc">
+                        Quality is measured via multiple metrics:
+                    </p>
+                    <ul class="step-list">
+                        <li><strong>PSNR</strong> — higher is better (>30 dB is good)</li>
+                        <li><strong>SSIM</strong> — closer to 1 is better</li>
+                        <li><strong>MSE</strong> — lower is better</li>
+                        <li><strong>CR</strong> — higher means more compression</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- ───── Footer ───── -->
+    <footer class="footer">
+        <div class="footer-inner">
+            <span class="footer-text">SVD Compressor — Built with NumPy, Flask & Chart.js</span>
+            <span class="footer-divider">·</span>
+            <span class="footer-text mono">A = UΣVᵀ</span>
+        </div>
+    </footer>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
