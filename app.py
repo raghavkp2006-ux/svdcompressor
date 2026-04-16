@@ -1,16 +1,35 @@
 """
 SVD Image Compression — Flask Backend
-Handles image upload, SVD compression (basic & adaptive), and metric computation.
+Handles image upload, rSVD compression (basic & adaptive), and metric computation.
+
+Architecture:
+  app.py (routes + metrics) → lib/compress.py → lib/rsvd.py + lib/prescreening.py
 """
 
 import os
 import io
 import base64
 import json
+import time
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 from flask import Flask, render_template, request, jsonify, send_file
 from flask_cors import CORS
+try:
+    from reportlab.lib.pagesizes import letter, A4
+    from reportlab.lib.units import inch
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, Table, TableStyle, PageBreak
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    HAS_REPORTLAB = True
+except ImportError:
+    HAS_REPORTLAB = False
+
+# ─── Import modular compression library ──────────────────────────────
+from lib.compress import compress_image, compress_image_basic, compress_channel
+from lib.prescreening import complexity_score, recommend_rank, SKIP_THRESHOLD
+from lib.rsvd import rsvd, reconstruct
 
 app = Flask(__name__)
 CORS(app)
@@ -92,54 +111,7 @@ def image_to_base64(image: Image.Image, fmt='PNG') -> str:
     return base64.b64encode(buffer.getvalue()).decode('utf-8')
 
 
-# ─── SVD Compression ─────────────────────────────────────────────────
-
-def svd_compress_channel(channel: np.ndarray, k: int) -> np.ndarray:
-    """Compress a single channel using SVD with k singular values."""
-    U, S, Vt = np.linalg.svd(channel, full_matrices=False)
-    k = min(k, len(S))
-    return U[:, :k] @ np.diag(S[:k]) @ Vt[:k, :]
-
-
-def svd_compress_image(img_array: np.ndarray, k: int) -> np.ndarray:
-    """Compress an image using basic SVD with k singular values."""
-    if img_array.ndim == 2:
-        return svd_compress_channel(img_array, k)
-
-    channels = img_array.shape[2]
-    result = np.zeros_like(img_array)
-    for c in range(channels):
-        result[:, :, c] = svd_compress_channel(img_array[:, :, c], k)
-    return result
-
-
-def adaptive_svd_compress(img_array: np.ndarray, energy_percent: float) -> tuple:
-    """
-    Adaptive SVD compression that selects k based on energy threshold.
-    Returns (compressed_array, k_values_per_channel).
-    """
-    def compress_channel_adaptive(channel, energy_pct):
-        U, S, Vt = np.linalg.svd(channel, full_matrices=False)
-        total_energy = np.sum(S ** 2)
-        cumulative_energy = np.cumsum(S ** 2)
-        threshold = energy_pct / 100.0 * total_energy
-        k = int(np.searchsorted(cumulative_energy, threshold) + 1)
-        k = min(k, len(S))
-        return U[:, :k] @ np.diag(S[:k]) @ Vt[:k, :], k
-
-    if img_array.ndim == 2:
-        compressed, k = compress_channel_adaptive(img_array, energy_percent)
-        return compressed, [k]
-
-    channels = img_array.shape[2]
-    result = np.zeros_like(img_array)
-    k_values = []
-    for c in range(channels):
-        compressed_ch, k = compress_channel_adaptive(img_array[:, :, c], energy_percent)
-        result[:, :, c] = compressed_ch
-        k_values.append(k)
-    return result, k_values
-
+# ─── Visualization Functions ─────────────────────────────────────────
 
 def get_singular_values(img_array: np.ndarray) -> dict:
     """Get singular values for visualization."""
@@ -173,6 +145,213 @@ def get_energy_curve(img_array: np.ndarray) -> dict:
     return result
 
 
+def compute_error_map(original: np.ndarray, compressed: np.ndarray) -> Image.Image:
+    """Generate error/difference visualization: bright = high error, dark = low error."""
+    diff = np.abs(original.astype(float) - compressed.astype(float))
+    
+    # Handle RGB vs grayscale
+    if diff.ndim == 3:
+        diff = np.mean(diff, axis=2)  # Average across channels
+    
+    # Normalize to 0-255
+    if diff.max() > 0:
+        diff_normalized = (diff / diff.max() * 255).astype(np.uint8)
+    else:
+        diff_normalized = np.zeros_like(diff, dtype=np.uint8)
+    
+    # Convert to Image
+    error_img = Image.fromarray(diff_normalized, mode='L')
+    return error_img
+
+
+def compute_block_heatmap(original: np.ndarray, compressed: np.ndarray, k_per_channel: list, mode: str) -> Image.Image:
+    """
+    Generate a heatmap showing complexity per block.
+    Blue = simple (low k), Red = complex (high k).
+    For adaptive mode, show the k values used per channel.
+    """
+    h, w = original.shape[:2]
+    block_size = 32
+    
+    # Create heatmap array
+    heatmap = np.zeros((h, w, 3), dtype=np.uint8)
+    
+    if mode == 'adaptive':
+        # For adaptive mode, show which k was used per channel
+        max_k = max([k for k in k_per_channel if k > 0]) if any(k > 0 for k in k_per_channel) else 1
+        
+        for by in range(0, h - block_size + 1, block_size):
+            for bx in range(0, w - block_size + 1, block_size):
+                # Calculate average k used for this region
+                channel_ks = [k for k in k_per_channel]
+                avg_k = np.mean([k for k in channel_ks if k > 0]) if any(k > 0 for k in channel_ks) else 0
+                
+                # Map k to color: blue (low) -> red (high)
+                if max_k > 0:
+                    k_normalized = avg_k / max_k  # 0 to 1
+                else:
+                    k_normalized = 0
+                
+                # Blue to Red gradient
+                r = int(k_normalized * 255)
+                b = int((1 - k_normalized) * 255)
+                color = (r, 0, b)
+                
+                # Fill block
+                x_end = min(bx + block_size, w)
+                y_end = min(by + block_size, h)
+                heatmap[by:y_end, bx:x_end] = color
+    else:
+        # For basic mode, show error magnitude per block
+        error = np.abs(original.astype(float) - compressed.astype(float))
+        if error.ndim == 3:
+            error = np.mean(error, axis=2)
+        
+        max_error = error.max() if error.max() > 0 else 1
+        
+        for by in range(0, h - block_size + 1, block_size):
+            for bx in range(0, w - block_size + 1, block_size):
+                block_error = np.mean(error[by:by+block_size, bx:bx+block_size])
+                error_normalized = block_error / max_error
+                
+                # Red gradient (more error = more red)
+                r = int(error_normalized * 255)
+                g = int((1 - error_normalized) * 128)
+                b = int((1 - error_normalized) * 128)
+                color = (r, g, b)
+                
+                # Fill block
+                x_end = min(bx + block_size, w)
+                y_end = min(by + block_size, h)
+                heatmap[by:y_end, bx:x_end] = color
+    
+    return Image.fromarray(heatmap, mode='RGB')
+
+
+def generate_pdf_report(metrics: dict, original_b64: str, compressed_b64: str, 
+                       error_map_b64: str, heatmap_b64: str) -> bytes:
+    """Generate a PDF report with compression results."""
+    if not HAS_REPORTLAB:
+        # Fallback if reportlab not installed
+        return None
+    
+    # Create PDF in memory
+    pdf_buffer = io.BytesIO()
+    doc = SimpleDocTemplate(pdf_buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
+    story = []
+    
+    # Styles
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=20,
+        textColor=colors.HexColor('#7c3aed'),
+        spaceAfter=12,
+        alignment=TA_CENTER,
+        fontName='Helvetica-Bold'
+    )
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=12,
+        textColor=colors.HexColor('#6366f1'),
+        spaceAfter=8,
+        fontName='Helvetica-Bold'
+    )
+    normal_style = ParagraphStyle(
+        'CustomNormal',
+        parent=styles['Normal'],
+        fontSize=10,
+        spaceAfter=6
+    )
+    
+    # Title
+    story.append(Paragraph("SVD Image Compression Report", title_style))
+    story.append(Spacer(1, 0.2*inch))
+    
+    # Header info
+    info_data = [
+        ['Mode:', metrics.get('mode', 'N/A').upper()],
+        ['K Value Used:', str(metrics.get('k_used', 'N/A'))],
+        ['Image Size:', f"{metrics['image_size'][0]} × {metrics['image_size'][1]} px"],
+        ['Processing Time:', f"{metrics.get('compute_time', 0):.2f}s"],
+        ['Algorithm:', 'Randomized SVD (Halko et al. 2011)'],
+    ]
+    info_table = Table(info_data, colWidths=[2*inch, 3*inch])
+    info_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f3e8ff')),
+        ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey),
+    ]))
+    story.append(info_table)
+    story.append(Spacer(1, 0.2*inch))
+    
+    # Metrics
+    story.append(Paragraph("Compression Metrics", heading_style))
+    metrics_data = [
+        ['Metric', 'Value', 'Description'],
+        ['PSNR (dB)', f"{metrics.get('psnr', 0):.2f}", 'Peak Signal-to-Noise Ratio - Higher is better'],
+        ['SSIM', f"{metrics.get('ssim', 0):.4f}", 'Structural Similarity - Closer to 1.0 is better'],
+        ['MSE', f"{metrics.get('mse', 0):.2f}", 'Mean Squared Error - Lower is better'],
+        ['Compression Ratio', f"{metrics.get('cr', 0):.2f}×", 'Original size / Compressed size'],
+    ]
+    metrics_table = Table(metrics_data, colWidths=[1.5*inch, 1*inch, 3*inch])
+    metrics_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#6366f1')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey),
+    ]))
+    story.append(metrics_table)
+    story.append(Spacer(1, 0.2*inch))
+    
+    # Images
+    story.append(Paragraph("Image Comparison", heading_style))
+    try:
+        # Decode base64 images
+        orig_data = base64.b64decode(original_b64.split(',')[1])
+        comp_data = base64.b64decode(compressed_b64.split(',')[1])
+        error_data = base64.b64decode(error_map_b64.split(',')[1])
+        hmap_data = base64.b64decode(heatmap_b64.split(',')[1])
+        
+        # Create image rows
+        img_orig = RLImage(io.BytesIO(orig_data), width=2*inch, height=1.5*inch)
+        img_comp = RLImage(io.BytesIO(comp_data), width=2*inch, height=1.5*inch)
+        img_error = RLImage(io.BytesIO(error_data), width=2*inch, height=1.5*inch)
+        img_hmap = RLImage(io.BytesIO(hmap_data), width=2*inch, height=1.5*inch)
+        
+        img_table = Table([
+            [img_orig, img_comp],
+            [img_error, img_hmap]
+        ], colWidths=[2.2*inch, 2.2*inch])
+        img_table.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        story.append(img_table)
+    except Exception as e:
+        story.append(Paragraph(f"<i>Could not embed images: {str(e)}</i>", normal_style))
+    
+    story.append(Spacer(1, 0.3*inch))
+    
+    # Footer
+    story.append(Paragraph("Generated by SVD Compressor", normal_style))
+    
+    # Build PDF
+    doc.build(story)
+    pdf_buffer.seek(0)
+    return pdf_buffer.getvalue()
+
+
 # ─── Routes ───────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -183,6 +362,8 @@ def index():
 @app.route('/api/compress', methods=['POST'])
 def compress():
     """Main compression endpoint."""
+    start_time = time.time()
+
     if 'image' not in request.files:
         return jsonify({'error': 'No image uploaded'}), 400
 
@@ -209,14 +390,17 @@ def compress():
         singular_values = get_singular_values(img_array)
         energy_curve = get_energy_curve(img_array)
 
-        # Perform compression
+        # Perform compression using modular library
         if mode == 'adaptive':
-            compressed_array, k_values = adaptive_svd_compress(img_array, energy)
+            compressed_array, k_values, scores = compress_image(
+                img_array, rank=None, energy_percent=energy
+            )
             used_k = max(k_values)
         else:
             k = min(k, max_k)
-            compressed_array = svd_compress_image(img_array, k)
-            k_values = [k] * img_array.shape[2] if img_array.ndim == 3 else [k]
+            compressed_array = compress_image_basic(img_array, k)
+            k_values = [k] * (img_array.shape[2] if img_array.ndim == 3 else 1)
+            scores = []
             used_k = k
 
         # Compute metrics
@@ -229,13 +413,20 @@ def compress():
         original_b64 = image_to_base64(img)
         compressed_img = array_to_image(compressed_array)
         compressed_b64 = image_to_base64(compressed_img)
+        
+        # Generate error map and heatmap
+        error_map_img = compute_error_map(img_array, compressed_array)
+        error_map_b64 = image_to_base64(error_map_img)
+        
+        heatmap_img = compute_block_heatmap(img_array, compressed_array, k_values, mode)
+        heatmap_b64 = image_to_base64(heatmap_img)
 
         # Build multi-k comparison data (for the chart)
         comparison_ks = [5, 10, 20, 50, 100, min(150, max_k), min(200, max_k)]
         comparison_ks = sorted(set([kk for kk in comparison_ks if kk <= max_k]))
         comparison_data = []
         for ck in comparison_ks:
-            c_arr = svd_compress_image(img_array, ck)
+            c_arr = compress_image_basic(img_array, ck)
             c_mse = compute_mse(img_array, c_arr)
             c_psnr = compute_psnr(c_mse)
             c_ssim = compute_ssim(img_array, c_arr)
@@ -248,10 +439,15 @@ def compress():
                 'cr': round(c_cr, 2)
             })
 
+        # Compute total execution time
+        compute_time = time.time() - start_time
+
         return jsonify({
             'success': True,
             'original': f'data:image/png;base64,{original_b64}',
             'compressed': f'data:image/png;base64,{compressed_b64}',
+            'error_map': f'data:image/png;base64,{error_map_b64}',
+            'heatmap': f'data:image/png;base64,{heatmap_b64}',
             'metrics': {
                 'mse': round(mse_val, 4),
                 'psnr': round(psnr_val, 4),
@@ -261,7 +457,11 @@ def compress():
                 'k_per_channel': k_values,
                 'max_k': max_k,
                 'image_size': list(img.size),
-                'mode': mode
+                'mode': mode,
+                'compute_time': compute_time,
+                'algorithm': 'rSVD (Halko et al. 2011)',
+                'power_iterations': 2,
+                'complexity_scores': scores if scores else None,
             },
             'singular_values': singular_values,
             'energy_curve': energy_curve,
@@ -288,6 +488,39 @@ def download():
             mimetype='image/png',
             as_attachment=True,
             download_name='svd_compressed.png'
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/report', methods=['POST'])
+def report():
+    """Generate and download PDF report."""
+    data = request.json
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+    
+    try:
+        if not HAS_REPORTLAB:
+            return jsonify({'error': 'PDF generation not available. Install reportlab.'}), 501
+        
+        metrics = data.get('metrics', {})
+        original_b64 = data.get('original', '')
+        compressed_b64 = data.get('compressed', '')
+        error_map_b64 = data.get('error_map', '')
+        heatmap_b64 = data.get('heatmap', '')
+        
+        pdf_bytes = generate_pdf_report(metrics, original_b64, compressed_b64, 
+                                       error_map_b64, heatmap_b64)
+        
+        if pdf_bytes is None:
+            return jsonify({'error': 'Failed to generate PDF'}), 500
+        
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name='svd_compression_report.pdf'
         )
     except Exception as e:
         return jsonify({'error': str(e)}), 500

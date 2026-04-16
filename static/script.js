@@ -88,10 +88,27 @@ const compRange    = $('#comparison-range');
 const compOverlay  = $('#comparison-overlay');
 const compLine     = $('#comparison-line');
 const btnDownload  = $('#btn-download');
+const btnReport    = $('#btn-report');
 const themeToggle  = $('#theme-toggle');
 
 // ── Theme Toggle Listener ──
 themeToggle.addEventListener('click', toggleTheme);
+
+
+// ── Utility Functions ──
+function getPSNRQuality(psnrValue) {
+    /**
+     * PSNR Quality Rating:
+     * > 40 dB: Excellent (imperceptible difference)
+     * 30-40 dB: Good (perceptible difference in dark areas)
+     * 20-30 dB: Fair (noticeable difference)
+     * < 20 dB: Poor (significant degradation)
+     */
+    if (psnrValue >= 40) return { label: 'Excellent', class: 'excellent' };
+    if (psnrValue >= 30) return { label: 'Good', class: 'good' };
+    if (psnrValue >= 20) return { label: 'Fair', class: 'fair' };
+    return { label: 'Poor', class: 'poor' };
+}
 
 
 // ── Upload Handling ──
@@ -222,11 +239,23 @@ function showResults(data) {
     animateValue('val-cr', metrics.cr, 2, '×');
     animateValue('val-mse', metrics.mse, 2, '');
 
+    // Add quality label for PSNR
+    const qualityLabel = getPSNRQuality(metrics.psnr);
+    const qualityEl = $('#quality-label');
+    qualityEl.textContent = qualityLabel.label;
+    qualityEl.className = `metric-quality-label ${qualityLabel.class}`;
+
     // Before/After images
     const imgOrig = $('#img-original');
     const imgComp = $('#img-compressed');
     imgOrig.src = data.original;
     imgComp.src = data.compressed;
+
+    // Error map and heatmap
+    const imgErrorMap = $('#img-error-map');
+    const imgHeatmap = $('#img-heatmap');
+    if (data.error_map) imgErrorMap.src = data.error_map;
+    if (data.heatmap) imgHeatmap.src = data.heatmap;
 
     // Comparison overlay size fix
     imgOrig.onload = () => {
@@ -243,10 +272,16 @@ function showResults(data) {
     $('#comparison-k').textContent = metrics.k_used;
     $('#info-size').textContent = `${metrics.image_size[0]} × ${metrics.image_size[1]}`;
     $('#info-mode').textContent = metrics.mode === 'adaptive' ? 'Adaptive SVD' : 'Basic SVD';
+    $('#info-time').textContent = metrics.compute_time.toFixed(2) + 's';
+    $('#info-algo').textContent = metrics.algorithm || 'rSVD';
 
     // Reset comparison slider
     compRange.value = 50;
     updateComparison(50);
+
+    // Store metrics for report download
+    window.lastMetrics = metrics;
+    window.lastData = data;
 
     // Trigger card animations
     $$('.metric-card').forEach(el => {
@@ -296,6 +331,55 @@ btnDownload.addEventListener('click', () => {
     a.click();
     document.body.removeChild(a);
 });
+
+btnReport.addEventListener('click', downloadReport);
+
+function downloadReport() {
+    if (!window.lastData || !window.lastMetrics) {
+        alert('No compression data available. Please compress an image first.');
+        return;
+    }
+
+    const reportData = {
+        metrics: window.lastMetrics,
+        original: window.lastData.original,
+        compressed: window.lastData.compressed,
+        error_map: window.lastData.error_map || '',
+        heatmap: window.lastData.heatmap || ''
+    };
+
+    // Show loading feedback
+    const originalText = btnReport.textContent;
+    btnReport.textContent = 'Generating...';
+    btnReport.disabled = true;
+
+    fetch('/api/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reportData)
+    })
+        .then(res => {
+            if (!res.ok) throw new Error('Report generation failed');
+            return res.blob();
+        })
+        .then(blob => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'svd_compression_report.pdf';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        })
+        .catch(err => {
+            alert('Failed to generate report: ' + err.message);
+        })
+        .finally(() => {
+            btnReport.textContent = originalText;
+            btnReport.disabled = false;
+        });
+}
 
 
 // ── Charts (theme-aware) ──
@@ -538,6 +622,7 @@ $$('.nav-link').forEach(link => {
         }
     });
 });
+
 
 
 // ── Intersection Observer for reveal animations ──

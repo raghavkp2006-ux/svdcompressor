@@ -24,6 +24,13 @@
     <nav class="navbar" id="main-nav">
         <div class="nav-inner">
             <div class="nav-brand">
+                <!-- VIT Logo -->
+                <div class="vit-logo" title="Vellore Institute of Technology">
+                    <svg width="28" height="28" viewBox="0 0 100 100" fill="none">
+                        <circle cx="50" cy="50" r="48" stroke="currentColor" stroke-width="2"/>
+                        <text x="50" y="62" font-size="40" font-weight="bold" text-anchor="middle" fill="currentColor" font-family="Arial">V</text>
+                    </svg>
+                </div>
                 <div class="brand-icon">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
                         <rect x="2" y="2" width="8" height="8" rx="2" fill="url(#g1)" opacity="0.9"/>
@@ -173,7 +180,11 @@
                             Compress Image
                         </span>
                         <span class="btn-loading" style="display:none">
-                            <div class="spinner"></div>
+                            <div class="skeleton-spinner">
+                                <div class="skeleton-bar"></div>
+                                <div class="skeleton-bar"></div>
+                                <div class="skeleton-bar"></div>
+                            </div>
                             Processing SVD...
                         </span>
                     </button>
@@ -198,6 +209,7 @@
                     </div>
                     <div class="metric-value" id="val-psnr">—</div>
                     <div class="metric-label">PSNR (dB)</div>
+                    <div class="metric-quality-label" id="quality-label">—</div>
                     <div class="metric-desc">Peak Signal-to-Noise Ratio</div>
                 </div>
                 <div class="metric-card" id="metric-ssim">
@@ -267,8 +279,38 @@
                         </svg>
                         Download Compressed
                     </button>
+                    <button class="btn-secondary" id="btn-report" title="Download compression report in PDF format">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                            <rect x="2" y="2" width="12" height="12" rx="1" stroke="currentColor" stroke-width="1.2"/>
+                            <line x1="5" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1"/>
+                            <line x1="5" y1="8" x2="11" y2="8" stroke="currentColor" stroke-width="1"/>
+                            <line x1="5" y1="10" x2="8" y2="10" stroke="currentColor" stroke-width="1"/>
+                        </svg>
+                        Download Report
+                    </button>
                     <div class="info-chip" id="info-chip">
-                        <span id="info-size">— × —</span> · <span id="info-mode">Basic SVD</span>
+                        <span id="info-size">— × —</span> · <span id="info-mode">Basic SVD</span> · <span id="info-time">—</span> · <span id="info-algo" class="algo-badge">rSVD</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Error Map & Heatmap Section -->
+            <div class="glass-card analysis-card">
+                <div class="comparison-header">
+                    <h3 class="card-title">Advanced Analysis</h3>
+                </div>
+                <div class="analysis-grid">
+                    <!-- Error Map -->
+                    <div class="analysis-item">
+                        <h4 class="analysis-label">Error / Difference Map</h4>
+                        <p class="analysis-desc">Bright pixels = high error, Dark = low error</p>
+                        <img id="img-error-map" class="analysis-img" alt="Error Map">
+                    </div>
+                    <!-- Heatmap -->
+                    <div class="analysis-item">
+                        <h4 class="analysis-label">Block Complexity Heatmap</h4>
+                        <p class="analysis-desc" id="heatmap-desc">🔵 Blue = simple (low k), 🔴 Red = complex (high k)</p>
+                        <img id="img-heatmap" class="analysis-img" alt="Complexity Heatmap">
                     </div>
                 </div>
             </div>
@@ -320,61 +362,116 @@
         <section class="section" id="explanation-section">
             <div class="section-header">
                 <span class="section-tag">04</span>
-                <h2 class="section-title">How SVD Compression Works</h2>
+                <h2 class="section-title">How rSVD Compression Works</h2>
+            </div>
+
+            <div class="algo-intro glass-card">
+                <div class="algo-intro-content">
+                    <h3 class="algo-intro-title">Randomized SVD — Halko, Martinsson, Tropp (2011)</h3>
+                    <p class="step-desc">
+                        The core idea: rSVD replaces the expensive exact SVD <strong>(O(mn²) cost)</strong> with a randomized sketch that finds the same top-k singular vectors much faster.
+                        For a 1000×1000 image channel, exact SVD takes ~10 seconds. rSVD at rank 50 takes ~200ms.
+                        Pre-screening adds a fast complexity check before you even start, so flat/smooth images skip heavy computation entirely.
+                    </p>
+                    <div class="algo-pipeline">
+                        <div class="pipeline-step"><span class="pipeline-icon">🔍</span><span>Pre-screen</span></div>
+                        <div class="pipeline-arrow">→</div>
+                        <div class="pipeline-step"><span class="pipeline-icon">🎲</span><span>Sketch</span></div>
+                        <div class="pipeline-arrow">→</div>
+                        <div class="pipeline-step"><span class="pipeline-icon">⚡</span><span>Power Iter</span></div>
+                        <div class="pipeline-arrow">→</div>
+                        <div class="pipeline-step"><span class="pipeline-icon">📐</span><span>Project</span></div>
+                        <div class="pipeline-arrow">→</div>
+                        <div class="pipeline-step"><span class="pipeline-icon">🧮</span><span>Small SVD</span></div>
+                        <div class="pipeline-arrow">→</div>
+                        <div class="pipeline-step"><span class="pipeline-icon">🖼️</span><span>Reconstruct</span></div>
+                    </div>
+                </div>
             </div>
 
             <div class="explanation-grid">
                 <div class="glass-card explanation-card">
                     <div class="step-number">1</div>
-                    <h3 class="step-title">Decompose</h3>
+                    <h3 class="step-title">Pre-screen</h3>
                     <p class="step-desc">
-                        Each colour channel of the image (an m × n matrix <strong>A</strong>) is factored into three matrices:
+                        Before any SVD computation, a fast complexity score is computed by sampling 16×16 blocks and measuring their variance.
+                        The top-quartile mean variance approximates DCT coefficient magnitude at 98% accuracy in &lt;5ms.
                     </p>
-                    <div class="math-block">A = U · Σ · Vᵀ</div>
+                    <div class="math-block">score = mean(top_quartile(block_variances))</div>
                     <p class="step-desc">
-                        <strong>U</strong> (m × m) holds left singular vectors,
-                        <strong>Σ</strong> (m × n) holds singular values in decreasing order,
-                        <strong>Vᵀ</strong> (n × n) holds right singular vectors.
+                        If the score is below <strong>80</strong>, the image is too smooth to benefit from SVD — it's returned as-is, saving all computation.
+                        Otherwise, the score maps to a recommended rank via a logarithmic curve.
                     </p>
                 </div>
 
                 <div class="glass-card explanation-card">
                     <div class="step-number">2</div>
-                    <h3 class="step-title">Truncate</h3>
+                    <h3 class="step-title">Random Sketch</h3>
                     <p class="step-desc">
-                        Keep only the top <strong>k</strong> singular values and their corresponding vectors. This forms a rank-k approximation:
+                        A random Gaussian projection matrix <strong>Ω</strong> (n × r) is generated, where r = k + oversample.
+                        Multiplying the image channel <strong>A</strong> by Ω creates a "sketch" that captures the dominant column space:
                     </p>
-                    <div class="math-block">A<sub>k</sub> = U<sub>k</sub> · Σ<sub>k</sub> · V<sub>k</sub>ᵀ</div>
+                    <div class="math-block">Y = A · Ω → (m × r) sketch</div>
                     <p class="step-desc">
-                        The Eckart-Young theorem guarantees this is the best rank-k approximation in Frobenius norm.
+                        The oversampling (typically +10) gives the randomized algorithm room to find near-optimal directions.
+                        A QR decomposition of Y produces an orthonormal basis <strong>Q</strong>.
                     </p>
                 </div>
 
                 <div class="glass-card explanation-card">
                     <div class="step-number">3</div>
-                    <h3 class="step-title">Reconstruct</h3>
+                    <h3 class="step-title">Power Iteration</h3>
                     <p class="step-desc">
-                        The compressed image is rebuilt from fewer numbers:
-                        instead of storing <strong>m × n</strong> values, you store <strong>k × (m + n + 1)</strong>.
+                        For images with slowly decaying singular values (gradients, smooth textures), the initial sketch may miss important directions.
+                        Power iteration sharpens the basis by repeatedly applying Aᵀ·A:
                     </p>
-                    <div class="math-block">CR = (m · n) / (k · (m + n + 1))</div>
+                    <div class="math-block">Q ← qr(A · qr(Aᵀ · Q))</div>
                     <p class="step-desc">
-                        Smaller k = more compression but lower quality. The trick is finding the sweet spot.
+                        Each iteration re-orthogonalizes via QR to prevent numerical drift.
+                        <strong>0 iters</strong> = raw rSVD (fast), <strong>2 iters</strong> = near-exact quality (default), <strong>4 iters</strong> = benchmark-grade.
                     </p>
                 </div>
 
                 <div class="glass-card explanation-card">
                     <div class="step-number">4</div>
+                    <h3 class="step-title">Project & Small SVD</h3>
+                    <p class="step-desc">
+                        Project A into the low-dimensional subspace found by Q, creating a small matrix B.
+                        Then run a cheap exact SVD on B instead of the full m×n matrix — this is where all the speedup comes from:
+                    </p>
+                    <div class="math-block">B = Qᵀ · A → svd(r×n) instead of svd(m×n)</div>
+                    <p class="step-desc">
+                        For rank 50 on an 800×600 image, this means a <strong>60×600 SVD</strong> instead of an <strong>800×600 SVD</strong> — roughly 13× fewer operations.
+                    </p>
+                </div>
+
+                <div class="glass-card explanation-card">
+                    <div class="step-number">5</div>
+                    <h3 class="step-title">Reconstruct</h3>
+                    <p class="step-desc">
+                        The left singular vectors of A are recovered as U = Q · U<sub>b</sub>, then truncated to rank k.
+                        The compressed image is reconstructed from far fewer numbers:
+                    </p>
+                    <div class="math-block">Â = U<sub>k</sub> · Σ<sub>k</sub> · V<sub>k</sub>ᵀ</div>
+                    <p class="step-desc">
+                        Instead of m × n values, you store only <strong>k × (m + n + 1)</strong> values.
+                        The Eckart-Young theorem guarantees this is the optimal rank-k approximation.
+                    </p>
+                </div>
+
+                <div class="glass-card explanation-card">
+                    <div class="step-number">6</div>
                     <h3 class="step-title">Evaluate</h3>
                     <p class="step-desc">
-                        Quality is measured via multiple metrics:
+                        Quality is measured via multiple complementary metrics:
                     </p>
                     <ul class="step-list">
-                        <li><strong>PSNR</strong> — higher is better (>30 dB is good)</li>
-                        <li><strong>SSIM</strong> — closer to 1 is better</li>
-                        <li><strong>MSE</strong> — lower is better</li>
-                        <li><strong>CR</strong> — higher means more compression</li>
+                        <li><strong>PSNR</strong> — peak signal-to-noise ratio; &gt;30 dB is good, &gt;40 dB is excellent</li>
+                        <li><strong>SSIM</strong> — structural similarity; closer to 1.0 = less perceptible difference</li>
+                        <li><strong>MSE</strong> — mean squared error; lower = less pixel-level deviation</li>
+                        <li><strong>CR</strong> — compression ratio; higher = more space saved</li>
                     </ul>
+                    <div class="math-block">CR = (m · n) / (k · (m + n + 1))</div>
                 </div>
             </div>
         </section>
@@ -383,9 +480,22 @@
     <!-- ───── Footer ───── -->
     <footer class="footer">
         <div class="footer-inner">
-            <span class="footer-text">SVD Compressor — Built with NumPy, Flask & Chart.js</span>
-            <span class="footer-divider">·</span>
-            <span class="footer-text mono">A = UΣVᵀ</span>
+            <div class="footer-left">
+                <a href="#" class="footer-logo" title="Vellore Institute of Technology">
+                    <svg width="24" height="24" viewBox="0 0 100 100" fill="none">
+                        <circle cx="50" cy="50" r="48" stroke="currentColor" stroke-width="2"/>
+                        <text x="50" y="62" font-size="40" font-weight="bold" text-anchor="middle" fill="currentColor" font-family="Arial">V</text>
+                    </svg>
+                    <span>VIT</span>
+                </a>
+                <span class="footer-text">Vellore Institute of Technology</span>
+            </div>
+            <div class="footer-center">
+                <span class="footer-text">SVD Compressor — Built with NumPy, Flask & Chart.js</span>
+                <span class="footer-divider">·</span>
+                <span class="footer-text mono">A = UΣVᵀ</span>
+            </div>
+
         </div>
     </footer>
 
