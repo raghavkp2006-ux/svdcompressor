@@ -1,27 +1,31 @@
-# SVD Image Compressor
+# Data Science Image Compressor (SVD, PCA, NMF, DCT)
 
-An interactive, mathematical image compression tool that leverages Singular Value Decomposition (SVD) to reduce file sizes while maintaining image quality.
+An interactive, mathematical image compression laboratory that leverages advanced linear algebra and matrix factorization to reduce file sizes while maintaining image quality.
 
-Built with a high-performance Python (Flask + NumPy) backend and a beautiful, responsive frontend featuring a modern glassmorphism UI with real-time analytics.
-
-![SVD Compressor — Dark Mode Hero](docs/screenshot.png)
+Built with a high-performance Python (Flask + NumPy + Scikit-Learn) backend and a beautiful, responsive frontend featuring a modern glassmorphism UI with real-time analytics.
 
 ---
 
 ## ✨ Features
 
+- **Four Powerful Algorithms:**
+  - `SVD (Randomized)`: Blazing fast Singular Value Decomposition using random projections.
+  - `PCA (Principal Components)`: Covariance-based dimensionality reduction.
+  - `NMF (Non-negative Matrix Factorization)`: Additive, parts-based image reconstruction.
+  - `DCT (Discrete Cosine Transform)`: Frequency domain compression (the math behind JPEG).
 - **Dual Compression Modes:**
-  - `Basic SVD`: Manually set the number of singular values ($k$) to see immediate compression vs. quality tradeoffs.
-  - `Adaptive SVD`: Set a target energy retention % (e.g. 95%) — the algorithm auto-selects the optimal $k$ **per color channel** using complexity pre-screening.
+  - `Basic Mode`: Manually set the number of components ($k$) to see immediate compression vs. quality tradeoffs (available for all algorithms).
+  - `Adaptive Mode`: Set a target energy retention % (e.g. 95%) — the system automatically calculates and selects the optimal $k$ **per color channel** using complexity pre-screening (available for **SVD** and **PCA**).
+- **Algorithm Speed Benchmark:**
+  - Instantly race all 4 algorithms against each other on the same image to visualize execution times in a comparative bar chart.
 - **Real-Time Analytics & Metrics:**
   - Computes MSE, PSNR (dB), SSIM, and Compression Ratio instantly after each compression.
 - **Interactive Visualizations:**
   - Before/After drag slider for pixel-perfect comparison.
-  - Rich Chart.js charts: Singular Value Decay, Cumulative Energy, PSNR vs $k$, SSIM vs $k$.
+  - Rich Chart.js charts: Singular Value Decay, Cumulative Energy, PSNR vs $k$, SSIM vs $k$, Storage Savings vs Quality, and Algorithm Benchmark.
   - Error map and block complexity heatmap.
-- **PDF Report:** Download a formatted PDF of compression results via ReportLab.
+- **PDF Report:** Download a formatted PDF of compression results.
 - **Premium UI/UX:** Glassmorphism, animated aurora background, persistent dark/light mode toggle.
-- **Fast In-Memory Processing** — no disk writes, powered entirely by NumPy.
 
 ---
 
@@ -32,60 +36,54 @@ graph TD
     U[("User / Browser")] -->|HTTP POST /api/compress| F["Flask Backend (app.py)"]
     F -->|returns JSON| U
     U -->|renders| FE["Frontend\n(HTML + CSS + JS + Chart.js)"]
-    F -->|calls| C["lib/compress.py\n(Top-level API)"]
+    
+    F -->|calls| C["lib/compress.py"]
+    F -->|calls| A["lib/algorithms.py"]
 
     subgraph "Compression Library (lib/)"
-        C -->|calls| PS["lib/prescreening.py\n(Complexity Scoring)"]
-        C -->|calls| RV["lib/rsvd.py\n(Randomized SVD)"]
+        C -->|calls| PS["prescreening.py\n(Complexity Scoring)"]
+        C -->|calls| RV["rsvd.py\n(Randomized SVD)"]
+        A --> PCA["sklearn.decomposition.PCA"]
+        A --> NMF["sklearn.decomposition.NMF"]
+        A --> DCT["scipy.fftpack.dct"]
     end
 ```
 
 ---
 
-## 🔄 Request Flow (Sequence Diagram)
+## 🔄 Adaptive Request Flow
 
 ```mermaid
 sequenceDiagram
     participant Browser
-    participant Flask as Flask (app.py)
+    participant Flask as app.py
     participant compress as compress.py
     participant prescreening as prescreening.py
-    participant rsvd as rsvd.py
+    participant algo as algorithms.py
 
-    Browser->>Flask: POST /api/compress (image, mode, k, energy)
-    Flask->>Flask: Open image, resize if > 800px, convert to float64
+    Browser->>Flask: POST /api/compress (image, mode="adaptive", energy)
+    Flask->>Flask: Open image, convert to float64
     Flask->>Flask: Compute singular values & energy curve for charts
 
-    alt mode == "adaptive"
-        Flask->>compress: compress_image(array, rank=None, energy%)
+    alt algo == "svd" or "pca"
         loop For each channel (R, G, B)
-            compress->>prescreening: complexity_score(channel)
-            prescreening-->>compress: score (float)
-            alt score < SKIP_THRESHOLD (80.0)
-                compress-->>compress: Skip SVD (channel is flat)
-            else
-                compress->>prescreening: recommend_rank(score, energy%, max_dim)
-                prescreening-->>compress: optimal k
-                compress->>rsvd: rsvd(channel, k)
-                rsvd-->>compress: U, S, Vt
-                compress->>rsvd: reconstruct(U, S, Vt)
-                rsvd-->>compress: compressed_channel
-            end
+            Flask->>prescreening: complexity_score(channel)
+            prescreening-->>Flask: score (float)
+            Flask->>prescreening: recommend_rank(score, energy%, max_dim)
+            prescreening-->>Flask: optimal k
         end
-        compress-->>Flask: compressed_array, k_values, scores
-    else mode == "basic"
-        Flask->>compress: compress_image_basic(array, k)
-        loop For each channel
-            compress->>rsvd: rsvd(channel, k)
-            rsvd-->>compress: U, S, Vt → reconstruct
+        
+        alt algo == "svd"
+            Flask->>compress: compress_image(array, auto_k)
+        else algo == "pca"
+            Flask->>algo: compress_image_algo(array, auto_k, 'pca')
         end
-        compress-->>Flask: compressed_array
+        
     end
 
     Flask->>Flask: Compute MSE, PSNR, SSIM, CR
     Flask->>Flask: Generate error map & block heatmap
-    Flask->>Flask: Build k-comparison sweep for charts
-    Flask-->>Browser: JSON { original, compressed, error_map, heatmap, metrics, charts }
+    Flask-->>Browser: JSON { original, compressed, metrics, charts }
 ```
 
 ---
@@ -95,114 +93,26 @@ sequenceDiagram
 | Layer | Technology |
 |---|---|
 | **Backend** | Python 3.10+, Flask 3.x, Flask-CORS |
-| **Numerical** | NumPy ≥ 1.24 |
+| **Data Science** | NumPy, Scikit-Learn, SciPy |
 | **Image I/O** | Pillow ≥ 10.0 |
-| **PDF Reports** | ReportLab ≥ 4.0 |
-| **Frontend** | HTML5, Vanilla CSS3, Vanilla JS (ES6+) |
-| **Charts** | Chart.js 4.x (CDN) |
-| **Fonts** | Inter + JetBrains Mono (Google Fonts) |
-| **Deployment** | Vercel (serverless, `vercel.json` included) |
+| **Frontend** | HTML5, CSS3, Vanilla JS, Chart.js 4.4.1 |
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Quickstart
 
-### Prerequisites
-
-Python 3.8+ installed.
-
-### Installation
-
+1. **Install Dependencies:**
 ```bash
-# 1. Clone the repo
-git clone https://github.com/raghavkp2006-ux/svdcompressor.git
-cd svdcompressor
-
-# 2. Create a virtual environment (recommended)
-python -m venv .venv
-.venv\Scripts\activate   # Windows
-# source .venv/bin/activate  # macOS / Linux
-
-# 3. Install dependencies
 pip install -r requirements.txt
 ```
 
-### Running Locally
-
+2. **Run the Server:**
 ```bash
 python app.py
 ```
 
-Navigate to `http://127.0.0.1:5000` in your browser.
+3. **Open in Browser:**
+Navigate to `http://localhost:5000`
 
 ---
-
-## 🧠 How It Works
-
-### 1. Decompose
-Each color channel (R, G, B) is treated as matrix **A** and decomposed:
-
-$$A = U \Sigma V^T$$
-
-### 2. Truncate
-Only the top $k$ singular values are kept — the rest are discarded:
-
-$$A_k = U_k \Sigma_k V_k^T$$
-
-By the **Eckart–Young theorem**, this is the optimal rank-$k$ approximation.
-
-### 3. Reconstruct
-The compressed image is rebuilt from far fewer numbers:
-
-$$\text{Storage: } k(m + n + 1) \text{ vs original } m \times n$$
-
-### 4. Evaluate
-Quality is measured via PSNR, SSIM, MSE, and Compression Ratio — all displayed in real time.
-
----
-
-## 📁 Project Structure
-
-```
-svdcompressor/
-├── app.py                  # Flask backend — routes, metrics, PDF generation
-├── requirements.txt
-├── vercel.json             # Vercel deployment config
-├── docs/
-│   └── screenshot.png      # App screenshot
-├── lib/
-│   ├── rsvd.py             # Randomized SVD core (Halko et al. 2011)
-│   ├── prescreening.py     # Block-variance complexity scoring
-│   └── compress.py         # Top-level compression API
-├── static/
-│   ├── style.css           # Design system (1678 lines, glassmorphism)
-│   └── script.js           # Frontend logic & Chart.js rendering
-└── templates/
-    └── index.html          # Single-page application
-```
-
----
-
-## 📊 Expected Results
-
-| Rank (k) | Compression Ratio | PSNR | SSIM | Quality |
-|---|---|---|---|---|
-| 5 | ~50× | ~20 dB | ~0.60 | Heavy artifacts |
-| 20 | ~15× | ~28 dB | ~0.80 | Recognizable |
-| 50 | ~6× | ~35 dB | ~0.92 | Good |
-| 100 | ~3× | ~40 dB | ~0.97 | Near-lossless |
-| 200 | ~1.5× | ~45 dB | ~0.99 | Indistinguishable |
-
----
-
-## 📄 References
-
-1. Halko, N., Martinsson, P. G., & Tropp, J. A. (2011). *Finding Structure with Randomness*. SIAM Review.
-2. Eckart, C., & Young, G. (1936). *The approximation of one matrix by another of lower rank*. Psychometrika.
-3. Wang, Z. et al. (2004). *Image Quality Assessment: From Error Visibility to Structural Similarity*. IEEE TIP.
-
----
-
-## 📝 License
-
-Open-sourced under the MIT License.
+*Created as an educational exploration into linear algebra, matrix factorization, and advanced data compression techniques.*

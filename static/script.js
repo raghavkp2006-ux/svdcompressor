@@ -14,6 +14,8 @@ let chartSV = null;
 let chartEnergy = null;
 let chartPSNR = null;
 let chartSSIM = null;
+let chartCRPSNR = null;
+let chartBenchmark = null;
 
 
 // ══════════════════════════════════════════════════════
@@ -89,7 +91,9 @@ const compOverlay  = $('#comparison-overlay');
 const compLine     = $('#comparison-line');
 const btnDownload  = $('#btn-download');
 const btnReport    = $('#btn-report');
+const btnBenchmark = $('#btn-benchmark');
 const themeToggle  = $('#theme-toggle');
+const algoSelect   = $('#algo-select');
 
 // ── Theme Toggle Listener ──
 themeToggle.addEventListener('click', toggleTheme);
@@ -179,6 +183,18 @@ energySlider.addEventListener('input', () => {
     energyValue.textContent = energySlider.value + '%';
 });
 
+// ── Algorithm Toggle ──
+algoSelect.addEventListener('change', (e) => {
+    if (e.target.value !== 'svd' && e.target.value !== 'pca') {
+        $('#mode-control-group').style.display = 'none';
+        if (currentMode === 'adaptive') {
+            switchMode('basic');
+        }
+    } else {
+        $('#mode-control-group').style.display = 'flex';
+    }
+});
+
 
 // ── Compress ──
 btnCompress.addEventListener('click', compress);
@@ -198,6 +214,7 @@ async function compress() {
     formData.append('mode', currentMode);
     formData.append('k', kSlider.value);
     formData.append('energy', energySlider.value);
+    formData.append('algo', algoSelect.value);
 
     try {
         const res = await fetch('/api/compress', {
@@ -382,6 +399,47 @@ function downloadReport() {
 }
 
 
+// ── Benchmark ──
+btnBenchmark.addEventListener('click', runBenchmark);
+
+async function runBenchmark() {
+    if (!selectedFile) return;
+    const originalText = btnBenchmark.innerHTML;
+    btnBenchmark.innerHTML = '<span class="spinner" style="display:inline-block; vertical-align:middle; width:12px; height:12px; margin-right:4px;"></span> Running...';
+    btnBenchmark.disabled = true;
+
+    const formData = new FormData();
+    formData.append('image', selectedFile);
+    formData.append('k', kSlider.value);
+
+    try {
+        const res = await fetch('/api/benchmark', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+        
+        if (!data.success) throw new Error(data.error);
+        
+        $('#card-benchmark').style.display = 'block';
+        
+        // ensure it animates in
+        $('#card-benchmark').classList.remove('animate-in');
+        void $('#card-benchmark').offsetWidth;
+        $('#card-benchmark').classList.add('animate-in');
+        
+        renderBenchmarkChart(data.times);
+        
+        $('#card-benchmark').scrollIntoView({ behavior: 'smooth', block: 'end' });
+    } catch(err) {
+        alert('Benchmark failed: ' + err.message);
+    } finally {
+        btnBenchmark.innerHTML = originalText;
+        btnBenchmark.disabled = false;
+    }
+}
+
+
 // ── Charts (theme-aware) ──
 const chartColors = {
     red: 'rgba(251, 113, 133, 0.9)',
@@ -444,8 +502,20 @@ function showCharts(data) {
 
     // Delay for smooth entrance
     setTimeout(() => {
-        renderSVChart(data.singular_values);
-        renderEnergyChart(data.energy_curve);
+        if (Object.keys(data.singular_values || {}).length > 0) {
+            $('#chart-sv').parentElement.parentElement.style.display = 'block';
+            renderSVChart(data.singular_values);
+        } else {
+            $('#chart-sv').parentElement.parentElement.style.display = 'none';
+        }
+        
+        if (Object.keys(data.energy_curve || {}).length > 0) {
+            $('#chart-energy').parentElement.parentElement.style.display = 'block';
+            renderEnergyChart(data.energy_curve);
+        } else {
+            $('#chart-energy').parentElement.parentElement.style.display = 'none';
+        }
+        
         renderComparisonCharts(data.comparison);
     }, 200);
 
@@ -556,6 +626,7 @@ function renderEnergyChart(energyData) {
 function renderComparisonCharts(comparison) {
     if (chartPSNR) chartPSNR.destroy();
     if (chartSSIM) chartSSIM.destroy();
+    if (chartCRPSNR) chartCRPSNR.destroy();
     const defaults = getChartDefaults();
 
     const labels = comparison.map(d => 'k=' + d.k);
@@ -606,6 +677,83 @@ function renderComparisonCharts(comparison) {
             scales: {
                 ...defaults.scales,
                 y: { ...defaults.scales.y, title: { display: true, text: 'SSIM Score', color: '#71717a', font: { size: 11 } }, min: 0, max: 1 }
+            }
+        }
+    });
+
+    chartCRPSNR = new Chart($('#chart-cr-psnr'), {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Compression Ratio (x)',
+                data: comparison.map(d => d.cr),
+                borderColor: chartColors.blue,
+                backgroundColor: chartColors.blueBg,
+                borderWidth: 2,
+                pointBackgroundColor: chartColors.blue,
+                pointRadius: 4,
+                yAxisID: 'y'
+            }, {
+                label: 'PSNR (dB)',
+                data: comparison.map(d => d.psnr),
+                borderColor: chartColors.red,
+                backgroundColor: chartColors.redBg,
+                borderWidth: 2,
+                borderDash: [5, 5],
+                pointBackgroundColor: chartColors.red,
+                pointRadius: 4,
+                yAxisID: 'y1'
+            }]
+        },
+        options: {
+            ...defaults,
+            scales: {
+                ...defaults.scales,
+                y: { ...defaults.scales.y, type: 'linear', display: true, position: 'left', title: { display: true, text: 'Compression Ratio (x)', color: '#71717a', font: { size: 11 } } },
+                y1: { ...defaults.scales.y, type: 'linear', display: true, position: 'right', title: { display: true, text: 'PSNR (dB)', color: '#71717a', font: { size: 11 } }, grid: { drawOnChartArea: false } }
+            }
+        }
+    });
+}
+
+function renderBenchmarkChart(times) {
+    if (chartBenchmark) chartBenchmark.destroy();
+    const defaults = getChartDefaults();
+    
+    const algos = [
+        { id: 'svd', label: 'rSVD', color: chartColors.purple, bg: 'rgba(167, 139, 250, 0.4)' },
+        { id: 'dct', label: 'DCT', color: chartColors.blue, bg: 'rgba(96, 165, 250, 0.4)' },
+        { id: 'pca', label: 'PCA', color: chartColors.green, bg: 'rgba(52, 211, 153, 0.4)' },
+        { id: 'nmf', label: 'NMF', color: chartColors.red, bg: 'rgba(251, 113, 133, 0.4)' }
+    ];
+    
+    const dataVals = algos.map(a => times[a.id] || 0);
+    const labels = algos.map(a => a.label);
+    const bgColors = algos.map(a => a.bg);
+    const borderColors = algos.map(a => a.color);
+
+    chartBenchmark = new Chart($('#chart-benchmark'), {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Execution Time (s)',
+                data: dataVals,
+                backgroundColor: bgColors,
+                borderColor: borderColors,
+                borderWidth: 1,
+                borderRadius: 4,
+                barPercentage: 0.6
+            }]
+        },
+        options: {
+            ...defaults,
+            indexAxis: 'y',
+            scales: {
+                ...defaults.scales,
+                x: { ...defaults.scales.x, title: { display: true, text: 'Time (Seconds)', color: '#71717a', font: { size: 11 } } },
+                y: { ...defaults.scales.y, grid: { display: false } }
             }
         }
     });

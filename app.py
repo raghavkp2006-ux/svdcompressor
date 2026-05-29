@@ -30,6 +30,7 @@ except ImportError:
 from lib.compress import compress_image, compress_image_basic, compress_channel
 from lib.prescreening import complexity_score, recommend_rank, SKIP_THRESHOLD
 from lib.rsvd import rsvd, reconstruct
+from lib.algorithms import compress_image_algo
 
 app = Flask(__name__)
 CORS(app)
@@ -371,6 +372,7 @@ def compress():
     mode = request.form.get('mode', 'basic')  # 'basic' or 'adaptive'
     k = int(request.form.get('k', 50))
     energy = float(request.form.get('energy', 95.0))
+    algo = request.form.get('algo', 'svd')
 
     try:
         # Open and convert image
@@ -386,19 +388,45 @@ def compress():
         img_array = image_to_array(img)
         max_k = min(img_array.shape[0], img_array.shape[1])
 
-        # Get singular values & energy curve for charts
-        singular_values = get_singular_values(img_array)
-        energy_curve = get_energy_curve(img_array)
+        # Get singular values & energy curve for charts (only if SVD or PCA)
+        if algo in ['svd', 'pca']:
+            singular_values = get_singular_values(img_array)
+            energy_curve = get_energy_curve(img_array)
+        else:
+            singular_values = {}
+            energy_curve = {}
 
         # Perform compression using modular library
-        if mode == 'adaptive':
-            compressed_array, k_values, scores = compress_image(
-                img_array, rank=None, energy_percent=energy
-            )
-            used_k = max(k_values)
+        if algo not in ['svd', 'pca']:
+            k = min(k, max_k)
+            compressed_array = compress_image_algo(img_array, k, algo)
+            k_values = [k] * (img_array.shape[2] if img_array.ndim == 3 else 1)
+            scores = []
+            used_k = k
+        elif mode == 'adaptive':
+            if algo == 'svd':
+                compressed_array, k_values, scores = compress_image(
+                    img_array, rank=None, energy_percent=energy
+                )
+                used_k = max(k_values)
+            else: # pca
+                channels = img_array.shape[2] if img_array.ndim == 3 else 1
+                k_values = []
+                scores = []
+                for c in range(channels):
+                    channel = img_array[:, :, c] if img_array.ndim == 3 else img_array
+                    score = complexity_score(channel)
+                    k_channel = recommend_rank(score, energy, max_k)
+                    k_values.append(k_channel)
+                    scores.append(score)
+                used_k = max(k_values)
+                compressed_array = compress_image_algo(img_array, used_k, 'pca')
         else:
             k = min(k, max_k)
-            compressed_array = compress_image_basic(img_array, k)
+            if algo == 'svd':
+                compressed_array = compress_image_basic(img_array, k)
+            else:
+                compressed_array = compress_image_algo(img_array, k, 'pca')
             k_values = [k] * (img_array.shape[2] if img_array.ndim == 3 else 1)
             scores = []
             used_k = k
@@ -422,21 +450,34 @@ def compress():
         heatmap_b64 = image_to_base64(heatmap_img)
 
         # Build multi-k comparison data (for the chart)
-        comparison_ks = [5, 10, 20, 50, 100, min(150, max_k), min(200, max_k)]
-        comparison_ks = sorted(set([kk for kk in comparison_ks if kk <= max_k]))
         comparison_data = []
-        for ck in comparison_ks:
-            c_arr = compress_image_basic(img_array, ck)
-            c_mse = compute_mse(img_array, c_arr)
-            c_psnr = compute_psnr(c_mse)
-            c_ssim = compute_ssim(img_array, c_arr)
-            c_cr = compute_compression_ratio(img_array.shape, ck)
+        if algo in ['svd', 'dct']:
+            comparison_ks = [5, 10, 20, 50, 100, min(150, max_k), min(200, max_k)]
+            comparison_ks = sorted(set([kk for kk in comparison_ks if kk <= max_k]))
+            for ck in comparison_ks:
+                if algo == 'svd':
+                    c_arr = compress_image_basic(img_array, ck)
+                else:
+                    c_arr = compress_image_algo(img_array, ck, algo)
+                c_mse = compute_mse(img_array, c_arr)
+                c_psnr = compute_psnr(c_mse)
+                c_ssim = compute_ssim(img_array, c_arr)
+                c_cr = compute_compression_ratio(img_array.shape, ck)
+                comparison_data.append({
+                    'k': ck,
+                    'psnr': round(c_psnr, 2),
+                    'ssim': round(c_ssim, 4),
+                    'mse': round(c_mse, 2),
+                    'cr': round(c_cr, 2)
+                })
+        else:
+            # For slow algorithms (NMF, PCA), only append the currently computed point
             comparison_data.append({
-                'k': ck,
-                'psnr': round(c_psnr, 2),
-                'ssim': round(c_ssim, 4),
-                'mse': round(c_mse, 2),
-                'cr': round(c_cr, 2)
+                'k': used_k,
+                'psnr': round(psnr_val, 2),
+                'ssim': round(ssim_val, 4),
+                'mse': round(mse_val, 2),
+                'cr': round(cr_val, 2)
             })
 
         # Compute total execution time
@@ -459,8 +500,8 @@ def compress():
                 'image_size': list(img.size),
                 'mode': mode,
                 'compute_time': compute_time,
-                'algorithm': 'rSVD (Halko et al. 2011)',
-                'power_iterations': 2,
+                'algorithm': algo.upper() if algo != 'svd' else 'rSVD (Halko et al. 2011)',
+                'power_iterations': 2 if algo == 'svd' else None,
                 'complexity_scores': scores if scores else None,
             },
             'singular_values': singular_values,
@@ -491,6 +532,43 @@ def download():
         )
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/benchmark', methods=['POST'])
+def api_benchmark():
+    if 'image' not in request.files:
+        return jsonify({'success': False, 'error': 'No image provided'}), 400
+
+    file = request.files['image']
+    try:
+        k = int(request.form.get('k', 50))
+    except ValueError:
+        k = 50
+
+    try:
+        img = Image.open(file.stream).convert('RGB')
+        # Resize image for benchmark to prevent NMF from taking too long
+        img.thumbnail((256, 256))
+        img_array = image_to_array(img)
+        
+        times = {}
+        algorithms = ['svd', 'pca', 'nmf', 'dct']
+        
+        for algo in algorithms:
+            start_time = time.time()
+            if algo == 'svd':
+                compress_image_basic(img_array, k)
+            else:
+                compress_image_algo(img_array, k, algo)
+            times[algo] = round(time.time() - start_time, 3)
+            
+        return jsonify({
+            'success': True,
+            'times': times,
+            'image_size': img_array.shape[:2]
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/report', methods=['POST'])
