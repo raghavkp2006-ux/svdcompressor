@@ -8,16 +8,46 @@ Handles:
   - Full RGB image assembly
 """
 
+import zlib, struct, io
 import numpy as np
-from .prescreening import complexity_score, recommend_rank, SKIP_THRESHOLD
+from .prescreening import complexity_score, recommend_rank, recommend_rank_learned, DEFAULT_SKIP_THRESHOLD
 from .rsvd import rsvd, reconstruct
+
+def serialize_factors(U, S, Vt) -> bytes:
+    """Pack U, S, Vt into bytes then zlib-compress."""
+    if U is None or S is None or Vt is None:
+        return b''
+    buf = io.BytesIO()
+    for arr in (U, S, Vt):
+        data = arr.astype(np.float32).tobytes()
+        buf.write(struct.pack('>II', *arr.shape))
+        buf.write(data)
+    return zlib.compress(buf.getvalue(), level=6)
+
+def compressed_size_bytes(U, S, Vt) -> int:
+    return len(serialize_factors(U, S, Vt))
+
+def true_compression_ratio(orig_shape, U_list, S_list, Vt_list) -> float:
+    """Compute true CR given lists of factors per channel."""
+    if len(orig_shape) == 2:
+        m, n = orig_shape
+        ch = 1
+    else:
+        m, n, ch = orig_shape
+        
+    orig_bytes = m * n * ch
+    comp_bytes = 0
+    for i in range(ch):
+        comp_bytes += compressed_size_bytes(U_list[i], S_list[i], Vt_list[i])
+        
+    return orig_bytes / comp_bytes if comp_bytes > 0 else 0.0
 
 
 def compress_channel(
     channel: np.ndarray,
     rank: int | None = None,
     energy_percent: float = 95.0,
-) -> tuple[np.ndarray, int, float, bool]:
+) -> tuple[np.ndarray, int, float, bool, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
     """
     Compress a single image channel using rSVD with pre-screening.
     
@@ -33,12 +63,20 @@ def compress_channel(
     score = complexity_score(channel)
 
     # Pre-screening: skip SVD for flat/smooth channels
-    if score < SKIP_THRESHOLD:
-        return channel.copy(), 0, score, True
+    if score < DEFAULT_SKIP_THRESHOLD:
+        return channel.copy(), 0, score, True, None, None, None
 
     # Determine rank
     max_dim = min(h, w)
-    k = rank if rank is not None else recommend_rank(score, energy_percent, max_dim)
+    
+    # Use learned predictor if no explicit rank is given
+    # Scale prediction by energy_percent to retain slider functionality
+    if rank is not None:
+        k = rank
+    else:
+        k_learned = recommend_rank_learned(channel, max_dim)
+        k = int(round(k_learned * (energy_percent / 95.0)))
+
     k = min(k, max_dim)  # Safety clamp
 
     # Core rSVD
@@ -48,14 +86,14 @@ def compress_channel(
     # Clamp to valid pixel range
     np.clip(compressed, 0, 255, out=compressed)
 
-    return compressed, k, score, False
+    return compressed, k, score, False, U, S, Vt
 
 
 def compress_image(
     img_array: np.ndarray,
     rank: int | None = None,
     energy_percent: float = 95.0,
-) -> tuple[np.ndarray, list[int], list[float]]:
+) -> tuple[np.ndarray, list[int], list[float], list[tuple]]:
     """
     Compress a full RGB (or grayscale) image.
     
@@ -69,28 +107,30 @@ def compress_image(
         energy_percent: Energy slider for auto-rank.
     
     Returns:
-        (compressed_array, k_values_per_channel, scores_per_channel)
+        (compressed_array, k_values_per_channel, scores_per_channel, factors_per_channel)
     """
     if img_array.ndim == 2:
-        compressed, k, score, _ = compress_channel(
+        compressed, k, score, _, U, S, Vt = compress_channel(
             img_array, rank, energy_percent
         )
-        return compressed, [k], [score]
+        return compressed, [k], [score], [(U, S, Vt)]
 
     channels = img_array.shape[2]
     result = np.zeros_like(img_array)
     k_values = []
     scores = []
+    factors = []
 
     for c in range(channels):
-        compressed, k, score, _ = compress_channel(
+        compressed, k, score, _, U, S, Vt = compress_channel(
             img_array[:, :, c], rank, energy_percent
         )
         result[:, :, c] = compressed
         k_values.append(k)
         scores.append(score)
+        factors.append((U, S, Vt))
 
-    return result, k_values, scores
+    return result, k_values, scores, factors
 
 
 def compress_image_basic(img_array: np.ndarray, k: int) -> np.ndarray:

@@ -8,10 +8,9 @@ import numpy as np
 
 # Images with complexity below this threshold are so simple
 # that SVD compression won't yield visible benefit — skip entirely.
-SKIP_THRESHOLD = 80.0
+DEFAULT_SKIP_THRESHOLD = 80.0
 
-
-def complexity_score(channel: np.ndarray) -> float:
+def complexity_score(channel: np.ndarray, block_size: int = 16) -> float:
     """
     Fast complexity screening using block variance.
     
@@ -29,7 +28,6 @@ def complexity_score(channel: np.ndarray) -> float:
         Complexity score (float). Low (~0–80) = flat/smooth, High (~8000+) = detailed.
     """
     h, w = channel.shape
-    block_size = 16
     variances = []
 
     for by in range(0, h - block_size + 1, block_size):
@@ -51,6 +49,7 @@ def recommend_rank(
     energy_percent: float,
     max_dim: int,
     min_rank: int = 5,
+    skip_threshold: float = DEFAULT_SKIP_THRESHOLD,
 ) -> int:
     """
     Map complexity score → recommended rank.
@@ -80,3 +79,29 @@ def recommend_rank(
     
     # Logarithmic mapping (exponent 0.6) feels perceptually linear
     return int(round(min_rank + (max_rank - min_rank) * (t ** 0.6)))
+
+import joblib
+import os
+
+_model = None  # lazy load
+
+def _load_model():
+    global _model
+    if _model is None:
+        model_path = os.path.join(os.path.dirname(__file__), "..", "models", "rank_predictor.pkl")
+        _model = joblib.load(model_path)
+    return _model
+
+def recommend_rank_learned(
+    channel: np.ndarray,
+    max_dim: int,
+    min_rank: int = 5,
+) -> int:
+    """Drop-in replacement for recommend_rank() using XGBoost."""
+    import sys
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    from features.extract_features import extract_features
+    feats = extract_features(channel)
+    model = _load_model()
+    raw = model.predict([feats])[0]
+    return int(np.clip(round(raw), min_rank, max_dim))

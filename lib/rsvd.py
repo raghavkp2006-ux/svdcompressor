@@ -82,6 +82,23 @@ def rsvd(
     k = min(rank, len(S))
     return U[:, :k], S[:k], Vt[:k, :]
 
+def rsvd_auto_rank(channel: np.ndarray,
+                   energy_threshold: float = 0.95,
+                   oversample: int = 10,
+                   power_iter: int = 2,
+                   max_rank: int = 250):
+    """
+    rSVD with automatic rank selection via spectral energy.
+    Finds minimum k s.t. sum(S[:k]^2)/sum(S^2) >= energy_threshold.
+    Implements Theorem 1 (Eckart-Young) directly.
+    """
+    k_probe = min(max_rank, min(channel.shape) - 1)
+    U, S, Vt = rsvd(channel, k_probe, oversample, power_iter)
+    cumulative = np.cumsum(S**2) / np.sum(S**2)
+    k_auto = int(np.searchsorted(cumulative, energy_threshold)) + 1
+    k_auto = max(1, min(k_auto, len(S)))
+    return U[:,:k_auto], S[:k_auto], Vt[:k_auto,:]
+
 
 def reconstruct(
     U: np.ndarray,

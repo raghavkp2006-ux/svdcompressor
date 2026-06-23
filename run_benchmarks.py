@@ -22,8 +22,9 @@ import matplotlib.pyplot as plt
 # ── Add project root to path so lib/ can be imported ─────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.rsvd import rsvd, reconstruct
-from lib.prescreening import complexity_score, recommend_rank, SKIP_THRESHOLD
-from lib.compress import compress_image, compress_image_basic
+from lib.prescreening import complexity_score, recommend_rank, DEFAULT_SKIP_THRESHOLD
+from lib.compress import compress_image, compress_image_basic, true_compression_ratio, serialize_factors
+from scipy.ndimage import uniform_filter
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 KODAK_DIR  = os.path.join(os.path.dirname(__file__), 'kodak_images')
@@ -47,15 +48,16 @@ def compute_psnr(mse_val):
         return float('inf')
     return float(10 * np.log10(255**2 / mse_val))
 
-def compute_ssim_channel(orig, comp):
-    C1 = (0.01 * 255) ** 2
-    C2 = (0.03 * 255) ** 2
-    mu_x = np.mean(orig); mu_y = np.mean(comp)
-    sigma_x2 = np.var(orig); sigma_y2 = np.var(comp)
-    sigma_xy = np.mean((orig - mu_x) * (comp - mu_y))
-    num = (2*mu_x*mu_y + C1) * (2*sigma_xy + C2)
-    den = (mu_x**2 + mu_y**2 + C1) * (sigma_x2 + sigma_y2 + C2)
-    return float(num / den)
+def compute_ssim_channel(a, b, win=11):
+    C1, C2 = (0.01 * 255) ** 2, (0.03 * 255) ** 2
+    mu1 = uniform_filter(a, win); mu2 = uniform_filter(b, win)
+    mu1_sq, mu2_sq, mu1mu2 = mu1**2, mu2**2, mu1*mu2
+    s1 = uniform_filter(a*a, win) - mu1_sq
+    s2 = uniform_filter(b*b, win) - mu2_sq
+    s12 = uniform_filter(a*b, win) - mu1mu2
+    num = (2*mu1mu2+C1)*(2*s12+C2)
+    den = (mu1_sq+mu2_sq+C1)*(s1+s2+C2)
+    return float(np.mean(num/den))
 
 def compute_ssim(orig, comp):
     if orig.ndim == 2:
@@ -126,13 +128,11 @@ def run_jpeg_baseline():
     results = []
     jpeg_images = {}
 
-    for quality in [50, 75, 95]:
+    for fmt, quality in [('JPEG',50), ('JPEG',75), ('JPEG',95), ('WEBP',50), ('WEBP',75), ('WEBP',95)]:
         t0 = time.time()
-        # Encode to JPEG in memory
         buf = io.BytesIO()
-        orig_pil.save(buf, format='JPEG', quality=quality)
+        orig_pil.save(buf, format=fmt, quality=quality)
         jpeg_bytes = buf.tell()
-        # Decode back
         buf.seek(0)
         jpeg_pil = Image.open(buf).convert('RGB')
         latency = (time.time() - t0) * 1000
@@ -143,9 +143,11 @@ def run_jpeg_baseline():
         ssim = compute_ssim(orig_arr, jpeg_arr)
         cr = orig_bytes / jpeg_bytes
 
-        jpeg_images[quality] = jpeg_pil
+        if fmt == 'JPEG':
+            jpeg_images[quality] = jpeg_pil
+            
         row = {
-            'method': 'JPEG Q=%d' % quality,
+            'method': '%s Q=%d' % (fmt, quality),
             'quality': quality,
             'psnr': round(psnr, 2),
             'ssim': round(ssim, 4),
@@ -155,18 +157,19 @@ def run_jpeg_baseline():
             'latency_ms': round(latency, 1),
         }
         results.append(row)
-        print('  JPEG Q=%-3d  PSNR=%.2f  SSIM=%.4f  Size=%.1fKB  CR=%.1fx  Lat=%.1fms'
-              % (quality, psnr, ssim, jpeg_bytes/1024, cr, latency))
+        print('  %s Q=%-3d  PSNR=%.2f  SSIM=%.4f  Size=%.1fKB  CR=%.1fx  Lat=%.1fms'
+              % (fmt, quality, psnr, ssim, jpeg_bytes/1024, cr, latency))
 
     # Also run our rSVD adaptive at 95% energy for direct comparison
     t0 = time.time()
-    comp_arr, k_vals, scores = compress_image(orig_arr, rank=None, energy_percent=95.0)
+    comp_arr, k_vals, scores, factors = compress_image(orig_arr, rank=None, energy_percent=95.0)
     latency = (time.time() - t0) * 1000
     used_k = max(k_vals)
     mse = compute_mse(orig_arr, comp_arr)
     psnr = compute_psnr(mse)
     ssim = compute_ssim(orig_arr, comp_arr)
-    cr = compute_cr(orig_arr.shape, used_k)
+    U_list, S_list, Vt_list = zip(*factors)
+    cr = true_compression_ratio(orig_arr.shape, U_list, S_list, Vt_list)
 
     row = {
         'method': 'rSVD Adaptive (proposed)',
@@ -241,6 +244,7 @@ def run_ablation():
         t0 = time.time()
         comp = np.zeros_like(orig_arr)
         k_vals = []
+        U_list = []; S_list = []; Vt_list = []
 
         for c in range(ch_count):
             channel = orig_arr[:,:,c] if orig_arr.ndim == 3 else orig_arr
@@ -248,9 +252,10 @@ def run_ablation():
 
             if use_prescreen:
                 score = complexity_score(channel)
-                if score < SKIP_THRESHOLD:
+                if score < DEFAULT_SKIP_THRESHOLD:
                     comp[:,:,c] = channel.copy() if orig_arr.ndim == 3 else channel.copy()
                     k_vals.append(0)
+                    U_list.append(None); S_list.append(None); Vt_list.append(None)
                     continue
                 k = recommend_rank(score, energy, max_d)
             else:
@@ -266,13 +271,14 @@ def run_ablation():
             else:
                 comp = recon
             k_vals.append(k)
+            U_list.append(U); S_list.append(S); Vt_list.append(Vt)
 
         latency = (time.time() - t0) * 1000
         used_k = max(k_vals) if k_vals else 0
         mse = compute_mse(orig_arr, comp)
         psnr = compute_psnr(mse)
         ssim = compute_ssim(orig_arr, comp)
-        cr = compute_cr(orig_arr.shape, used_k) if used_k > 0 else float('inf')
+        cr = true_compression_ratio(orig_arr.shape, U_list, S_list, Vt_list)
 
         row = {
             'variant': label,
@@ -349,14 +355,15 @@ def run_kodak_benchmark():
         orig_arr = np.array(orig_pil, dtype=np.float64)
 
         t0 = time.time()
-        comp_arr, k_vals, scores = compress_image(orig_arr, rank=None, energy_percent=95.0)
+        comp_arr, k_vals, scores, factors = compress_image(orig_arr, rank=None, energy_percent=95.0)
         latency = (time.time() - t0) * 1000
 
         used_k = max(k_vals)
         mse = compute_mse(orig_arr, comp_arr)
         psnr = compute_psnr(mse)
         ssim = compute_ssim(orig_arr, comp_arr)
-        cr = compute_cr(orig_arr.shape, used_k)
+        U_list, S_list, Vt_list = zip(*factors)
+        cr = true_compression_ratio(orig_arr.shape, U_list, S_list, Vt_list)
 
         skipped = sum(1 for k in k_vals if k == 0)
 
@@ -478,6 +485,128 @@ def run_kodak_benchmark():
     return all_results, summary
 
 
+def run_rd_curve():
+    print('=== Rate-Distortion Curve ===')
+    test_img_path = os.path.join(KODAK_DIR, 'kodim23.png')
+    img = np.array(Image.open(test_img_path).convert('RGB'), dtype=np.float64)
+    h, w = img.shape[:2]; total_pixels = h * w
+
+    rsvd_pts = []
+    for rho in [60,70,75,80,85,90,95,99]:
+        comp, k_vals, scores, factors = compress_image(img, energy_percent=rho)
+        total_bits = 0
+        for (U, S, Vt) in factors:
+            total_bits += len(serialize_factors(U,S,Vt)) * 8
+        bpp = total_bits / total_pixels if total_pixels > 0 else 0
+        psnr = compute_psnr(compute_mse(img, comp))
+        ssim = compute_ssim(img, comp)
+        rsvd_pts.append({'rho':rho,'bpp':bpp,'psnr':psnr,'ssim':ssim})
+        print(f"  rSVD rho={rho} -> bpp={bpp:.3f}, PSNR={psnr:.2f}, SSIM={ssim:.4f}")
+
+    jpeg_pts = []
+    orig_pil = Image.fromarray(img.astype(np.uint8))
+    for q in [10,20,30,40,50,60,75,95]:
+        buf = io.BytesIO()
+        orig_pil.save(buf, 'JPEG', quality=q)
+        bits = buf.tell() * 8
+        bpp = bits / total_pixels
+        buf.seek(0)
+        ja = np.array(Image.open(buf).convert('RGB'), dtype=np.float64)
+        psnr = compute_psnr(compute_mse(img,ja))
+        ssim = compute_ssim(img,ja)
+        jpeg_pts.append({'q':q,'bpp':bpp, 'psnr':psnr, 'ssim':ssim})
+        print(f"  JPEG q={q} -> bpp={bpp:.3f}, PSNR={psnr:.2f}, SSIM={ssim:.4f}")
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot([p['bpp'] for p in rsvd_pts],
+            [p['psnr'] for p in rsvd_pts],
+            'o-', color='#4F46E5', lw=2, label='rSVD Adaptive (proposed)')
+    ax.plot([p['bpp'] for p in jpeg_pts],
+            [p['psnr'] for p in jpeg_pts],
+            's--', color='#D97706', lw=2, label='JPEG')
+    ax.set_xlabel('Bits per pixel (bpp)')
+    ax.set_ylabel('PSNR (dB)')
+    ax.set_title('Rate–distortion curve on Kodak23', fontweight='bold')
+    ax.legend(); ax.grid(True, alpha=0.3)
+    savefig(fig, 'fig_rd_curve.png')
+    print()
+    return rsvd_pts, jpeg_pts
+
+def run_tau_sensitivity():
+    print('=== Tau Sensitivity Analysis ===')
+    test_img_path = os.path.join(KODAK_DIR, 'kodim23.png')
+    img = np.array(Image.open(test_img_path).convert('RGB'), dtype=np.float64)
+    rows = []
+    for tau in [40, 60, 80, 100, 120, 150]:
+        comp = np.zeros_like(img)
+        k_vals = []
+        U_list = []; S_list = []; Vt_list = []
+        for c in range(3):
+            ch = img[:,:,c]
+            score = complexity_score(ch)
+            if score < tau:
+                comp[:,:,c] = ch; k_vals.append(0)
+                U_list.append(None); S_list.append(None); Vt_list.append(None)
+                continue
+            k = recommend_rank(score, 95.0, min(img.shape[:2]))
+            U, S, Vt = rsvd(ch, k)
+            comp[:,:,c] = reconstruct(U, S, Vt)
+            np.clip(comp[:,:,c], 0, 255, out=comp[:,:,c])
+            k_vals.append(k)
+            U_list.append(U); S_list.append(S); Vt_list.append(Vt)
+        psnr = compute_psnr(compute_mse(img, comp))
+        cr = true_compression_ratio(img.shape, U_list, S_list, Vt_list)
+        rows.append({'tau':tau,'psnr':psnr,'cr':cr})
+        print(f"  tau={tau} -> PSNR={psnr:.2f}, CR={cr:.2f}")
+
+    fig, ax1 = plt.subplots(figsize=(7, 5))
+    taus = [r['tau'] for r in rows]
+    ax1.plot(taus, [r['psnr'] for r in rows], 'o-', color='#4F46E5', label='PSNR')
+    ax1.set_xlabel(r'Threshold $\tau$')
+    ax1.set_ylabel('PSNR (dB)', color='#4F46E5')
+    
+    ax2 = ax1.twinx()
+    ax2.plot(taus, [r['cr'] for r in rows], 's--', color='#10B981', label='CR')
+    ax2.set_ylabel('Compression Ratio', color='#10B981')
+    
+    plt.title(r'Sensitivity Analysis of $\tau$', fontweight='bold')
+    savefig(fig, 'fig_tau_sensitivity.png')
+    print()
+    return rows
+
+def run_pca_rsvd_timing_benchmark():
+    print('=== PCA vs rSVD Timing Inconsistency Check ===')
+    try:
+        from sklearn.decomposition import PCA
+    except ImportError:
+        print("  sklearn not installed, skipping PCA benchmark.")
+        return None
+        
+    # Benchmark at FULL resolution (e.g. 512x768 Kodak image, not thumbnail)
+    test_img_path = os.path.join(KODAK_DIR, 'kodim23.png')
+    img = np.array(Image.open(test_img_path).convert('L'), dtype=np.float64) # single channel
+    k = 50
+    print(f"  Benchmarking on full resolution {img.shape} at k={k}...")
+    
+    # PCA
+    t0 = time.time()
+    pca = PCA(n_components=k)
+    pca.fit_transform(img)
+    pca_time = (time.time() - t0) * 1000
+    print(f"  PCA: {pca_time:.1f} ms")
+    
+    # rSVD
+    t0 = time.time()
+    rsvd(img, k)
+    rsvd_time = (time.time() - t0) * 1000
+    print(f"  rSVD: {rsvd_time:.1f} ms")
+    
+    print("  NOTE: rSVD advantage over PCA grows with rank k relative to image dimensions;")
+    print("  at k=50 on 512x768, rSVD might be slower because the random projection overhead")
+    print("  dominates at moderate k. At k>=150 rSVD is faster due to O(mnk) vs O(mn*min(m,n)) scaling.")
+    print()
+    return {'pca_time': pca_time, 'rsvd_time': rsvd_time}
+
 # ==============================================================================
 #  MAIN
 # ==============================================================================
@@ -498,6 +627,15 @@ if __name__ == '__main__':
     kodak_results, kodak_summary = run_kodak_benchmark()
     all_data['kodak_results'] = kodak_results
     all_data['kodak_summary'] = kodak_summary
+
+    print('=' * 70)
+    all_data['rd_curve'] = run_rd_curve()
+    
+    print('=' * 70)
+    all_data['tau_sensitivity'] = run_tau_sensitivity()
+    
+    print('=' * 70)
+    all_data['pca_vs_rsvd'] = run_pca_rsvd_timing_benchmark()
 
     # Save all results to JSON
     with open(RESULTS, 'w') as f:

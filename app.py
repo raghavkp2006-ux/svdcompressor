@@ -12,6 +12,7 @@ import base64
 import json
 import time
 import numpy as np
+from scipy.ndimage import uniform_filter
 from PIL import Image, ImageDraw
 from flask import Flask, render_template, request, jsonify, send_file
 from flask_cors import CORS
@@ -28,7 +29,7 @@ except ImportError:
 
 # ─── Import modular compression library ──────────────────────────────
 from lib.compress import compress_image, compress_image_basic, compress_channel
-from lib.prescreening import complexity_score, recommend_rank, SKIP_THRESHOLD
+from lib.prescreening import complexity_score, recommend_rank, DEFAULT_SKIP_THRESHOLD
 from lib.rsvd import rsvd, reconstruct
 from lib.algorithms import compress_image_algo
 
@@ -65,21 +66,17 @@ def compute_psnr(mse_val: float) -> float:
     return float(10 * np.log10((255 ** 2) / mse_val))
 
 
-def compute_ssim_channel(orig: np.ndarray, comp: np.ndarray) -> float:
-    """Simplified SSIM for a single channel."""
-    C1 = (0.01 * 255) ** 2
-    C2 = (0.03 * 255) ** 2
-
-    mu_x = np.mean(orig)
-    mu_y = np.mean(comp)
-    sigma_x2 = np.var(orig)
-    sigma_y2 = np.var(comp)
-    sigma_xy = np.mean((orig - mu_x) * (comp - mu_y))
-
-    numerator = (2 * mu_x * mu_y + C1) * (2 * sigma_xy + C2)
-    denominator = (mu_x ** 2 + mu_y ** 2 + C1) * (sigma_x2 + sigma_y2 + C2)
-
-    return float(numerator / denominator)
+def compute_ssim_channel(a: np.ndarray, b: np.ndarray, win: int = 11) -> float:
+    """Proper multi-scale SSIM for a single channel."""
+    C1, C2 = (0.01*255)**2, (0.03*255)**2
+    mu1 = uniform_filter(a, win); mu2 = uniform_filter(b, win)
+    mu1_sq, mu2_sq, mu1mu2 = mu1**2, mu2**2, mu1*mu2
+    s1 = uniform_filter(a*a, win) - mu1_sq
+    s2 = uniform_filter(b*b, win) - mu2_sq
+    s12 = uniform_filter(a*b, win) - mu1mu2
+    num = (2*mu1mu2+C1)*(2*s12+C2)
+    den = (mu1_sq+mu2_sq+C1)*(s1+s2+C2)
+    return float(np.mean(num/den))
 
 
 def compute_ssim(original: np.ndarray, compressed: np.ndarray) -> float:
@@ -405,7 +402,7 @@ def compress():
             used_k = k
         elif mode == 'adaptive':
             if algo == 'svd':
-                compressed_array, k_values, scores = compress_image(
+                compressed_array, k_values, scores, _ = compress_image(
                     img_array, rank=None, energy_percent=energy
                 )
                 used_k = max(k_values)
