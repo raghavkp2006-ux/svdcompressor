@@ -10,7 +10,7 @@ Handles:
 
 import zlib, struct, io
 import numpy as np
-from .prescreening import complexity_score, recommend_rank, recommend_rank_learned, DEFAULT_SKIP_THRESHOLD
+from .prescreening import complexity_score, recommend_rank, DEFAULT_SKIP_THRESHOLD
 from .rsvd import rsvd, reconstruct
 
 def serialize_factors(U, S, Vt) -> bytes:
@@ -74,8 +74,7 @@ def compress_channel(
     if rank is not None:
         k = rank
     else:
-        k_learned = recommend_rank_learned(channel, max_dim)
-        k = int(round(k_learned * (energy_percent / 95.0)))
+        k = recommend_rank(score, energy_percent, max_dim)
 
     k = min(k, max_dim)  # Safety clamp
 

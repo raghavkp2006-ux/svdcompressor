@@ -146,6 +146,9 @@ function handleFile(file) {
         uploadZone.style.display = 'none';
         uploadPreview.style.display = 'block';
         btnCompress.disabled = false;
+        
+        // Automatically detect and set best algorithm/parameters
+        autoDetectAlgorithm();
     };
     reader.readAsDataURL(file);
 }
@@ -195,6 +198,51 @@ algoSelect.addEventListener('change', (e) => {
     }
 });
 
+async function autoDetectAlgorithm() {
+    if (!selectedFile) return;
+    
+    // Show some loading state on the button
+    const originalText = btnCompress.innerHTML;
+    btnCompress.innerHTML = '🤖 Auto-Detecting Best Settings...';
+    btnCompress.disabled = true;
+    
+    const formData = new FormData();
+    formData.append('image', selectedFile);
+    
+    try {
+        const res = await fetch('/api/recommend_algorithm', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+        
+        if (!data.success) {
+            console.error('Error auto-detecting:', data.error);
+            return;
+        }
+        
+        // Select the recommended algorithm
+        algoSelect.value = data.recommended_algorithm;
+        algoSelect.dispatchEvent(new Event('change'));
+        
+        // Select the recommended mode
+        if (data.recommended_mode && (data.recommended_algorithm === 'svd' || data.recommended_algorithm === 'pca')) {
+            switchMode(data.recommended_mode);
+        }
+        
+        // Set the recommended k value
+        if (data.recommended_k) {
+            kSlider.value = data.recommended_k;
+            kValue.textContent = data.recommended_k;
+        }
+        
+    } catch (err) {
+        console.error('Failed to auto-detect settings:', err.message);
+    } finally {
+        btnCompress.innerHTML = originalText;
+        btnCompress.disabled = false;
+    }
+}
 
 // ── Compress ──
 btnCompress.addEventListener('click', compress);

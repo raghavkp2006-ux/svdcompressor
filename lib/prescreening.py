@@ -80,28 +80,3 @@ def recommend_rank(
     # Logarithmic mapping (exponent 0.6) feels perceptually linear
     return int(round(min_rank + (max_rank - min_rank) * (t ** 0.6)))
 
-import joblib
-import os
-
-_model = None  # lazy load
-
-def _load_model():
-    global _model
-    if _model is None:
-        model_path = os.path.join(os.path.dirname(__file__), "..", "models", "rank_predictor.pkl")
-        _model = joblib.load(model_path)
-    return _model
-
-def recommend_rank_learned(
-    channel: np.ndarray,
-    max_dim: int,
-    min_rank: int = 5,
-) -> int:
-    """Drop-in replacement for recommend_rank() using XGBoost."""
-    import sys
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-    from features.extract_features import extract_features
-    feats = extract_features(channel)
-    model = _load_model()
-    raw = model.predict([feats])[0]
-    return int(np.clip(round(raw), min_rank, max_dim))

@@ -11,6 +11,7 @@ import io
 import base64
 import json
 import time
+import joblib
 import numpy as np
 from scipy.ndimage import uniform_filter
 from PIL import Image, ImageDraw
@@ -32,6 +33,7 @@ from lib.compress import compress_image, compress_image_basic, compress_channel
 from lib.prescreening import complexity_score, recommend_rank, DEFAULT_SKIP_THRESHOLD
 from lib.rsvd import rsvd, reconstruct
 from lib.algorithms import compress_image_algo
+from features.extract_features import extract_features
 
 app = Flask(__name__)
 CORS(app)
@@ -597,6 +599,57 @@ def report():
             as_attachment=True,
             download_name='svd_compression_report.pdf'
         )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/recommend_algorithm', methods=['POST'])
+def recommend_algorithm():
+    """Predict the best compression algorithm for the uploaded image."""
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image uploaded'}), 400
+
+    file = request.files['image']
+    try:
+        img = Image.open(file.stream).convert('RGB')
+        
+        # We need the image as grayscale to extract features
+        gray_img = img.convert('L')
+        gray_array = np.array(gray_img, dtype=np.float64)
+        
+        # Extract features
+        feats = extract_features(gray_array)
+        
+        # Load model
+        model_path = os.path.join(os.path.dirname(__file__), 'models', 'algorithm_agent.pkl')
+        if not os.path.exists(model_path):
+            return jsonify({'error': 'Algorithm recommendation model not found.'}), 404
+            
+        model = joblib.load(model_path)
+        
+        # Predict best algorithm
+        predicted_algo = model.predict([feats])[0]
+        
+        # Determine complexity for k/energy recommendation
+        score = complexity_score(gray_array)
+        
+        # Decide mode based on complexity
+        # If image is very simple (low score), adaptive is best.
+        # If highly complex, basic is best to ensure sufficient k.
+        recommended_mode = 'adaptive' if score < 1000 else 'basic'
+        
+        # Calculate a reasonable default k
+        h, w = gray_array.shape
+        max_dim = min(h, w)
+        recommended_k = recommend_rank(score, 95.0, max_dim)
+        
+        return jsonify({
+            'success': True,
+            'recommended_algorithm': predicted_algo,
+            'recommended_mode': recommended_mode,
+            'recommended_k': recommended_k,
+            'complexity_score': score
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
