@@ -54,7 +54,7 @@ def process_image(img_path):
             
             # Score balances quality (PSNR) and speed (time)
             # Higher PSNR is good, lower time is good
-            score = psnr / (t + 0.1) 
+            score = psnr 
             results[algo] = score
             
             if score > best_score:
@@ -73,9 +73,9 @@ def main():
     train_dir = os.path.join(dataset_dir, "DIV2K_train_HR", "DIV2K_train_HR")
     valid_dir = os.path.join(dataset_dir, "DIV2K_valid_HR", "DIV2K_valid_HR")
     
-    # Grab images (limit to 60 total for reasonable generation time)
-    train_images = glob.glob(os.path.join(train_dir, "*.png"))[:50]
-    valid_images = glob.glob(os.path.join(valid_dir, "*.png"))[:10]
+    # Grab images (limit to 200 total for reasonable generation time)
+    train_images = glob.glob(os.path.join(train_dir, "*.png"))[:150]
+    valid_images = glob.glob(os.path.join(valid_dir, "*.png"))[:50]
     all_images = train_images + valid_images
     
     if not all_images:
