@@ -14,7 +14,7 @@ from lib.compress import compress_image_basic
 from features.extract_features import extract_features
 from app import compute_mse, compute_psnr
 
-def process_image(img_path):
+def process_image(img_path, idx):
     print(f"Processing {img_path}...")
     try:
         img = Image.open(img_path).convert('RGB')
@@ -34,7 +34,6 @@ def process_image(img_path):
         features = extract_features(gray_array)
         
         # Evaluate algorithms
-        k = 30 # Fixed k for comparison
         best_algo = None
         best_score = -float('inf')
         
@@ -42,18 +41,16 @@ def process_image(img_path):
         results = {}
         
         for algo in algorithms:
-            start_t = time.time()
+            current_k = 29 if algo == 'pca' else 30
+            
             if algo == 'svd':
-                comp = compress_image_basic(img_array, k)
+                comp = compress_image_basic(img_array, current_k)
             else:
-                comp = compress_image_algo(img_array, k, algo)
-            t = time.time() - start_t
+                comp = compress_image_algo(img_array, current_k, algo)
             
             mse = compute_mse(img_array, comp)
             psnr = compute_psnr(mse)
             
-            # Score balances quality (PSNR) and speed (time)
-            # Higher PSNR is good, lower time is good
             score = psnr 
             results[algo] = score
             
@@ -61,7 +58,9 @@ def process_image(img_path):
                 best_score = score
                 best_algo = algo
                 
-        print(f"  Best: {best_algo} (Scores: {results})")
+        if idx < 10:
+            print(f"  [Sample {idx+1}] Raw PSNRs: {results}")
+        print(f"  Best: {best_algo}")
         return features, best_algo
         
     except Exception as e:
@@ -69,14 +68,10 @@ def process_image(img_path):
         return None, None
 
 def main():
-    dataset_dir = r"C:\Users\ragha\OneDrive\Desktop\papaer"
-    train_dir = os.path.join(dataset_dir, "DIV2K_train_HR", "DIV2K_train_HR")
-    valid_dir = os.path.join(dataset_dir, "DIV2K_valid_HR", "DIV2K_valid_HR")
+    valid_dir = r"C:\Users\ragha\OneDrive\Desktop\papaer\DIV2K_valid_HR\DIV2K_valid_HR"
     
-    # Grab images (limit to 200 total for reasonable generation time)
-    train_images = glob.glob(os.path.join(train_dir, "*.png"))[:150]
-    valid_images = glob.glob(os.path.join(valid_dir, "*.png"))[:50]
-    all_images = train_images + valid_images
+    # Grab images (limit to 100 total)
+    all_images = glob.glob(os.path.join(valid_dir, "*.png"))[:100]
     
     if not all_images:
         print("No images found! Check dataset path.")
@@ -93,8 +88,8 @@ def main():
             "best_algorithm"
         ])
         
-        for img_path in all_images:
-            feats, label = process_image(img_path)
+        for idx, img_path in enumerate(all_images):
+            feats, label = process_image(img_path, idx)
             if feats and label:
                 writer.writerow(feats + [label])
                 
