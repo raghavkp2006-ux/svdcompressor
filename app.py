@@ -68,28 +68,14 @@ def compute_psnr(mse_val: float) -> float:
     return float(10 * np.log10((255 ** 2) / mse_val))
 
 
-def compute_ssim_channel(a: np.ndarray, b: np.ndarray, win: int = 11) -> float:
-    """Proper multi-scale SSIM for a single channel."""
-    C1, C2 = (0.01*255)**2, (0.03*255)**2
-    mu1 = uniform_filter(a, win); mu2 = uniform_filter(b, win)
-    mu1_sq, mu2_sq, mu1mu2 = mu1**2, mu2**2, mu1*mu2
-    s1 = uniform_filter(a*a, win) - mu1_sq
-    s2 = uniform_filter(b*b, win) - mu2_sq
-    s12 = uniform_filter(a*b, win) - mu1mu2
-    num = (2*mu1mu2+C1)*(2*s12+C2)
-    den = (mu1_sq+mu2_sq+C1)*(s1+s2+C2)
-    return float(np.mean(num/den))
-
+from skimage.metrics import structural_similarity as ssim_skimage
+import numpy as np
 
 def compute_ssim(original: np.ndarray, compressed: np.ndarray) -> float:
-    """Compute SSIM across all channels."""
-    if original.ndim == 2:
-        return compute_ssim_channel(original, compressed)
-    channels = original.shape[2]
-    ssim_vals = []
-    for c in range(channels):
-        ssim_vals.append(compute_ssim_channel(original[:, :, c], compressed[:, :, c]))
-    return float(np.mean(ssim_vals))
+    kwargs = {'data_range': 255.0}
+    if original.ndim == 3:
+        kwargs['channel_axis'] = 2
+    return float(ssim_skimage(original, compressed, **kwargs))
 
 
 def compute_compression_ratio(original_shape, k: int) -> float:

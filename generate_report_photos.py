@@ -1,6 +1,14 @@
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
+plt.rcParams.update({
+    'font.size': 14,
+    'axes.titlesize': 16,
+    'axes.labelsize': 14,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
+    'legend.fontsize': 12,
+})
 import time
 import os
 import sys
@@ -17,12 +25,12 @@ def calculate_psnr(img1, img2):
     return 20 * np.log10(255.0 / np.sqrt(mse))
 
 def main():
-    img_path = r'c:\antigravity_projects\svds\svdcompressor\kodak_images\kodim01.png'
+    img_path = r'c:\antigravity_projects\svd compressor\kodak_images\kodim01.png'
     original_img = Image.open(img_path).convert('RGB')
     original_array = np.array(original_img, dtype=np.float64)
 
     start_time = time.time()
-    compressed_array, k_values, scores = compress_image(original_array, energy_percent=95.0)
+    compressed_array, k_values, scores, _ = compress_image(original_array, energy_percent=95.0)
     latency_ms = (time.time() - start_time) * 1000
 
     compressed_uint8 = np.clip(compressed_array, 0, 255).astype(np.uint8)

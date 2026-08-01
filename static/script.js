@@ -515,7 +515,7 @@ function getChartDefaults() {
             legend: {
                 labels: {
                     color: dark ? 'rgba(161, 161, 170, 0.8)' : 'rgba(82, 82, 91, 0.8)',
-                    font: { family: "'Inter', sans-serif", size: 11 },
+                    font: { family: "'Inter', sans-serif", size: 15 },
                     boxWidth: 12,
                     padding: 12
                 }
@@ -528,18 +528,18 @@ function getChartDefaults() {
                 borderWidth: 1,
                 cornerRadius: 8,
                 padding: 10,
-                titleFont: { family: "'Inter', sans-serif", weight: '600' },
-                bodyFont: { family: "'JetBrains Mono', monospace", size: 12 }
+                titleFont: { family: "'Inter', sans-serif", weight: '600', size: 16 },
+                bodyFont: { family: "'JetBrains Mono', monospace", size: 16 }
             }
         },
         scales: {
             x: {
                 grid: { color: dark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.05)', drawBorder: false },
-                ticks: { color: dark ? 'rgba(113, 113, 122, 0.8)' : 'rgba(113, 113, 122, 0.7)', font: { size: 10 } }
+                ticks: { color: dark ? 'rgba(113, 113, 122, 0.8)' : 'rgba(113, 113, 122, 0.7)', font: { size: 14 } }
             },
             y: {
                 grid: { color: dark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.05)', drawBorder: false },
-                ticks: { color: dark ? 'rgba(113, 113, 122, 0.8)' : 'rgba(113, 113, 122, 0.7)', font: { size: 10 } }
+                ticks: { color: dark ? 'rgba(113, 113, 122, 0.8)' : 'rgba(113, 113, 122, 0.7)', font: { size: 14 } }
             }
         }
     };
@@ -610,8 +610,8 @@ function renderSVChart(svData) {
             ...defaults,
             scales: {
                 ...defaults.scales,
-                x: { ...defaults.scales.x, title: { display: true, text: 'Index', color: '#71717a', font: { size: 11 } } },
-                y: { ...defaults.scales.y, title: { display: true, text: 'Singular Value', color: '#71717a', font: { size: 11 } }, type: 'logarithmic' }
+                x: { ...defaults.scales.x, title: { display: true, text: 'Index', color: '#71717a', font: { size: 15 } } },
+                y: { ...defaults.scales.y, title: { display: true, text: 'Singular Value', color: '#71717a', font: { size: 15 } }, type: 'logarithmic' }
             }
         }
     });
@@ -664,8 +664,8 @@ function renderEnergyChart(energyData) {
             ...defaults,
             scales: {
                 ...defaults.scales,
-                x: { ...defaults.scales.x, title: { display: true, text: 'k (Singular Values)', color: '#71717a', font: { size: 11 } } },
-                y: { ...defaults.scales.y, title: { display: true, text: 'Energy (%)', color: '#71717a', font: { size: 11 } }, min: 0, max: 100 }
+                x: { ...defaults.scales.x, title: { display: true, text: 'k (Singular Values)', color: '#71717a', font: { size: 15 } } },
+                y: { ...defaults.scales.y, title: { display: true, text: 'Energy (%)', color: '#71717a', font: { size: 15 } }, min: 0, max: 100 }
             }
         }
     });
@@ -699,7 +699,7 @@ function renderComparisonCharts(comparison) {
             ...defaults,
             scales: {
                 ...defaults.scales,
-                y: { ...defaults.scales.y, title: { display: true, text: 'PSNR (dB)', color: '#71717a', font: { size: 11 } } }
+                y: { ...defaults.scales.y, title: { display: true, text: 'PSNR (dB)', color: '#71717a', font: { size: 15 } } }
             }
         }
     });
@@ -724,7 +724,7 @@ function renderComparisonCharts(comparison) {
             ...defaults,
             scales: {
                 ...defaults.scales,
-                y: { ...defaults.scales.y, title: { display: true, text: 'SSIM Score', color: '#71717a', font: { size: 11 } }, min: 0, max: 1 }
+                y: { ...defaults.scales.y, title: { display: true, text: 'SSIM Score', color: '#71717a', font: { size: 15 } }, min: 0, max: 1 }
             }
         }
     });
@@ -758,8 +758,8 @@ function renderComparisonCharts(comparison) {
             ...defaults,
             scales: {
                 ...defaults.scales,
-                y: { ...defaults.scales.y, type: 'linear', display: true, position: 'left', title: { display: true, text: 'Compression Ratio (x)', color: '#71717a', font: { size: 11 } } },
-                y1: { ...defaults.scales.y, type: 'linear', display: true, position: 'right', title: { display: true, text: 'PSNR (dB)', color: '#71717a', font: { size: 11 } }, grid: { drawOnChartArea: false } }
+                y: { ...defaults.scales.y, type: 'linear', display: true, position: 'left', title: { display: true, text: 'Compression Ratio (x)', color: '#71717a', font: { size: 15 } } },
+                y1: { ...defaults.scales.y, type: 'linear', display: true, position: 'right', title: { display: true, text: 'PSNR (dB)', color: '#71717a', font: { size: 15 } }, grid: { drawOnChartArea: false } }
             }
         }
     });
@@ -800,7 +800,7 @@ function renderBenchmarkChart(times) {
             indexAxis: 'y',
             scales: {
                 ...defaults.scales,
-                x: { ...defaults.scales.x, title: { display: true, text: 'Time (Seconds)', color: '#71717a', font: { size: 11 } } },
+                x: { ...defaults.scales.x, title: { display: true, text: 'Time (Seconds)', color: '#71717a', font: { size: 15 } } },
                 y: { ...defaults.scales.y, grid: { display: false } }
             }
         }

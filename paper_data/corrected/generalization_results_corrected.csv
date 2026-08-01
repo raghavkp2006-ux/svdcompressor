@@ -1,0 +1,3 @@
+dataset,n_images,psnr_mean,psnr_std,ssim_mean,ssim_std,cr_mean,cr_std,latency_ms_mean,latency_ms_std
+Kodak24,24,30.913,2.4118,0.835895,0.044694,3.569,1.0415,444.01,94.43
+GenAI,1848,61.9612,10.7656,0.994254,0.019194,2.4184,2.1255,21.66,16.46

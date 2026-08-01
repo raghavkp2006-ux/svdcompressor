@@ -1,0 +1,2 @@
+psnr_mean,psnr_std,ssim_mean,ssim_std,cr_mean,cr_std,latency_ms_mean,latency_ms_std,t_stat,p_val,mean_diff_psnr,ci_95_lower,ci_95_upper
+30.91,2.41,0.8359,0.0447,3.6,1.0,674.3,150.5,-5.077,3.9e-05,-1.2621,-1.7763,-0.7478

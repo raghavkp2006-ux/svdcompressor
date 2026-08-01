@@ -1,0 +1,5 @@
+config,psnr_mean,ssim_mean,cr_mean,latency_ms_mean
+"No pre-screener, q=0",31.4332,0.8286,1.8717,392.1
+"No pre-screener, q=2",35.3619,0.9178,1.8717,719.1
+"Pre-screener, q=0",27.8251,0.7199,3.569,393.2
+"Pre-screener, q=2 (proposed)",30.9122,0.8358,3.569,514.0

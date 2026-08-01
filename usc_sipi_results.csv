@@ -1,0 +1,2 @@
+dataset,n_images,psnr_mean,psnr_std,ssim_mean,ssim_std,cr_mean,cr_std,latency_ms_mean,latency_ms_std
+USC-SIPI,39,41.0878,18.3973,0.890187,0.094458,3.309,2.8448,280.6,136.96

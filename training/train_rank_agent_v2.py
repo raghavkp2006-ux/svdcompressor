@@ -6,6 +6,14 @@ import numpy as np
 import pandas as pd
 import joblib
 import matplotlib.pyplot as plt
+plt.rcParams.update({
+    'font.size': 14,
+    'axes.titlesize': 16,
+    'axes.labelsize': 14,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
+    'legend.fontsize': 12,
+})
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
@@ -78,7 +86,7 @@ def process_image(img_path):
 
 def main():
     start_time = time.time()
-    valid_dir = r"C:\Users\ragha\OneDrive\Desktop\papaer\DIV2K_valid_HR\DIV2K_valid_HR"
+    valid_dir = r"C:\dataset\DIV2K_valid_HR\DIV2K_valid_HR"
     
     print(f"Searching for images in {valid_dir}...")
     all_images = glob.glob(os.path.join(valid_dir, "*.png"))[:100]

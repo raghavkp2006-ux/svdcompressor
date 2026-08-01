@@ -18,6 +18,14 @@ from PIL import Image
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+plt.rcParams.update({
+    'font.size': 14,
+    'axes.titlesize': 16,
+    'axes.labelsize': 14,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
+    'legend.fontsize': 12,
+})
 
 # ── Add project root to path so lib/ can be imported ─────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -48,32 +56,28 @@ def compute_psnr(mse_val):
         return float('inf')
     return float(10 * np.log10(255**2 / mse_val))
 
-def compute_ssim_channel(a, b, win=11):
-    C1, C2 = (0.01 * 255) ** 2, (0.03 * 255) ** 2
-    mu1 = uniform_filter(a, win); mu2 = uniform_filter(b, win)
-    mu1_sq, mu2_sq, mu1mu2 = mu1**2, mu2**2, mu1*mu2
-    s1 = uniform_filter(a*a, win) - mu1_sq
-    s2 = uniform_filter(b*b, win) - mu2_sq
-    s12 = uniform_filter(a*b, win) - mu1mu2
-    num = (2*mu1mu2+C1)*(2*s12+C2)
-    den = (mu1_sq+mu2_sq+C1)*(s1+s2+C2)
-    return float(np.mean(num/den))
+from skimage.metrics import structural_similarity as ssim_skimage
 
 def compute_ssim(orig, comp):
-    if orig.ndim == 2:
-        return compute_ssim_channel(orig, comp)
-    return float(np.mean([
-        compute_ssim_channel(orig[:,:,c], comp[:,:,c])
-        for c in range(orig.shape[2])
-    ]))
+    kwargs = {'data_range': 255.0}
+    if orig.ndim == 3:
+        kwargs['channel_axis'] = 2
+    return float(ssim_skimage(orig, comp, **kwargs))
 
-def compute_cr(shape, k):
+def compute_cr(shape, k_vals):
     if len(shape) == 2:
         m, n = shape; ch = 1
     else:
         m, n, ch = shape
     orig_size = m * n * ch
-    comp_size = ch * k * (m + n + 1)
+    comp_size = 0
+    if isinstance(k_vals, (int, float)):
+        k_vals = [k_vals] * ch
+    for k in k_vals:
+        if k == 0:
+            comp_size += m * n
+        else:
+            comp_size += k * (m + n + 1)
     return float(orig_size / comp_size) if comp_size > 0 else 0.0
 
 def savefig(fig, name):
@@ -169,7 +173,7 @@ def run_jpeg_baseline():
     psnr = compute_psnr(mse)
     ssim = compute_ssim(orig_arr, comp_arr)
     U_list, S_list, Vt_list = zip(*factors)
-    cr = true_compression_ratio(orig_arr.shape, U_list, S_list, Vt_list)
+    cr = compute_cr(orig_arr.shape, k_vals)
 
     row = {
         'method': 'rSVD Adaptive (proposed)',
@@ -278,7 +282,7 @@ def run_ablation():
         mse = compute_mse(orig_arr, comp)
         psnr = compute_psnr(mse)
         ssim = compute_ssim(orig_arr, comp)
-        cr = true_compression_ratio(orig_arr.shape, U_list, S_list, Vt_list)
+        cr = compute_cr(orig_arr.shape, k_vals)
 
         row = {
             'variant': label,
@@ -363,7 +367,7 @@ def run_kodak_benchmark():
         psnr = compute_psnr(mse)
         ssim = compute_ssim(orig_arr, comp_arr)
         U_list, S_list, Vt_list = zip(*factors)
-        cr = true_compression_ratio(orig_arr.shape, U_list, S_list, Vt_list)
+        cr = compute_cr(orig_arr.shape, k_vals)
 
         skipped = sum(1 for k in k_vals if k == 0)
 

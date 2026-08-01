@@ -20,7 +20,10 @@ def serialize_factors(U, S, Vt) -> bytes:
     buf = io.BytesIO()
     for arr in (U, S, Vt):
         data = arr.astype(np.float32).tobytes()
-        buf.write(struct.pack('>II', *arr.shape))
+        if arr.ndim == 1:
+            buf.write(struct.pack('>II', arr.shape[0], 1))
+        else:
+            buf.write(struct.pack('>II', *arr.shape))
         buf.write(data)
     return zlib.compress(buf.getvalue(), level=6)
 
